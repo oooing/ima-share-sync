@@ -364,7 +364,13 @@ class ImaSpeedSyncView extends ItemView {
 
   render(): void {
     this.contentEl.empty();
-    this.contentEl.createEl("h3", { text: "IMA Share Sync" });
+    const heading = this.contentEl.createDiv({ cls: "ima-share-sync-heading" });
+    heading.createEl("h3", { text: "IMA Share Sync" });
+    heading.createSpan({
+      cls: "ima-share-sync-version",
+      text: `v${this.plugin.manifest.version}`,
+      attr: { "aria-label": `当前版本 ${this.plugin.manifest.version}` },
+    });
 
     const toolbar = this.contentEl.createDiv({ cls: "ima-speed-sync-toolbar" });
     const syncGroup = toolbar.createDiv({ cls: "ima-speed-sync-split-button" });
@@ -499,6 +505,11 @@ class ImaSpeedSyncSettingTab extends PluginSettingTab {
         rel: "noopener noreferrer",
         "aria-label": "打开 IMA Share Sync 的 GitHub 仓库，手动点星支持插件",
       },
+    });
+
+    containerEl.createDiv({
+      cls: "ima-share-sync-settings-version",
+      text: `当前版本 v${this.plugin.manifest.version}`,
     });
 
     if (!Platform.isWin) {

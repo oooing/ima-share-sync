@@ -1,3 +1,29 @@
+.ima-share-sync-heading {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-block: 1em;
+}
+
+.ima-share-sync-heading h3 {
+  margin: 0;
+}
+
+.ima-share-sync-version,
+.ima-share-sync-settings-version {
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+}
+
+.ima-share-sync-version {
+  white-space: nowrap;
+}
+
+.ima-share-sync-settings-version {
+  margin-bottom: 16px;
+}
+
 .ima-share-sync-has-warning {
   position: relative;
 }

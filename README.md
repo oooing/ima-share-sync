@@ -8,7 +8,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/oooing/ima-share-sync/releases/tag/0.1.0">下载 0.1.0</a> ·
+  <a href="https://github.com/oooing/ima-share-sync/releases/tag/0.1.1">下载 0.1.1</a> ·
   <a href="#快速开始">快速开始</a> ·
   <a href="#使用前请了解">使用边界</a> ·
   <a href="https://github.com/oooing/ima-share-sync/issues">反馈问题</a>
@@ -62,7 +62,7 @@
 
 ### 2 · 安装插件
 
-从 [0.1.0 发布页](https://github.com/oooing/ima-share-sync/releases/tag/0.1.0) 下载这三个文件：
+从 [0.1.1 发布页](https://github.com/oooing/ima-share-sync/releases/tag/0.1.1) 下载这三个文件：
 
 ```text
 你的 Obsidian 仓库/
@@ -97,6 +97,8 @@
 首次使用需要确认本地自动化授权。之后手动点击会直接开始，**不再额外倒计时**。
 
 同步完成后，到目标文件夹阅读新笔记。也可以在插件侧栏点击 **同步日志**，展开每次运行结果；再次点击入口或「收起」即可折叠，不会删除记录。
+
+插件标题旁和设置页会显示当前安装的版本号，方便确认更新是否生效。
 
 ## 日常使用，尽量少打扰
 
@@ -166,6 +168,10 @@
 
 同步历史保存在插件的 `data.json`，技术诊断位于 `%LOCALAPPDATA%\ima-speed-sync\sync.log`。日志可能包含文章标题，分享前请检查；你的仓库备份或同步服务也可能包含这些文件。
 
+**仓库之外的本地访问：** 为运行已随插件打包的 PowerShell 脚本、传递提取结果和显示原生提示框，插件会在 Windows 临时目录下创建 `ima-speed-sync/run-*` 与 `ima-operation-card-*` 工作目录，并在结束时尝试清理。崩溃或清理失败时可能残留临时文件。诊断日志保留在上述 `%LOCALAPPDATA%` 目录，用于排查同步失败；必要时会读取该目录下 IMA 的安装路径以启动客户端。插件不会从网络下载或安装脚本、依赖或更新自身。
+
+**账号与网络：** 需要你自行安装并登录 IMA，由 IMA 客户端访问分享内容；插件不收集 IMA 密码、不调用自建服务器。点击 GitHub 支持或文档链接时才会由浏览器打开相应网站。
+
 请只同步有权复制、保存的内容。本项目是独立社区插件，**非腾讯、IMA 或 Obsidian 官方产品**，不代表上述品牌的授权或背书。
 
 ## 开发与贡献
@@ -179,7 +185,7 @@ npm run build
 构建产物在 `dist/`。完整检查覆盖版本一致性、代码规范、类型、JavaScript 行为、PowerShell 提取逻辑和原生提示框；自动化测试不等同于所有 IMA 版本的实机兼容性保证。
 
 - [技术说明与已知限制](docs/TECHNICAL.md)
-- [0.1.0 更新说明](docs/releases/0.1.0.md)
+- [0.1.1 更新说明](docs/releases/0.1.1.md)
 - [安全与隐私说明](SECURITY.md)
 - [提交问题或建议](https://github.com/oooing/ima-share-sync/issues)
 

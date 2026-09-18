@@ -1,9 +1,9 @@
 {
   "id": "ima-speed-sync",
   "name": "IMA Share Sync",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "minAppVersion": "1.11.4",
-  "description": "通过本地 Windows UI 自动化，将 IMA 分享内容同步到 Obsidian 仓库。",
+  "description": "Sync IMA shared text articles to local Markdown notes using Windows desktop automation.",
   "author": "oooin",
   "isDesktopOnly": true
 }

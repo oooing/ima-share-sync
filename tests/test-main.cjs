@@ -157,7 +157,7 @@ class Menu {
 
 class Plugin {
   constructor() {
-    this.manifest = { id: "ima-speed-sync", dir: ".obsidian/plugins/ima-speed-sync" };
+    this.manifest = { ...JSON.parse(fs.readFileSync(nodePath.join(__dirname, "../manifest.json"), "utf8")), dir: ".obsidian/plugins/ima-speed-sync" };
     this.app = {
       vault: {
         adapter: new FileSystemAdapter(),
@@ -551,6 +551,12 @@ Module._load = function (request, parent, isMain) {
     [sourceManifest.name],
     "the rendered sidebar heading must use the new display name",
   );
+  assert.strictEqual(findElements(view.contentEl, (el) => el.cls === "ima-share-sync-version")[0].text, `v${sourceManifest.version}`, "sidebar should display the installed manifest version");
+  plugin.manifest.version = "9.8.7";
+  view.render();
+  assert.strictEqual(findElements(view.contentEl, (el) => el.cls === "ima-share-sync-version")[0].text, "v9.8.7", "version display must not be hard-coded");
+  plugin.manifest.version = sourceManifest.version;
+  view.render();
   scheduledRenderCount = 0;
   vaultEventCallbacks.get("modify")(new TFile("Other/无关.md"));
   await new Promise((resolve) => setTimeout(resolve, 200));
@@ -658,6 +664,7 @@ Module._load = function (request, parent, isMain) {
 
   settingTabs[0].display();
   const settingsContainer = settingTabs[0].containerEl;
+  assert.strictEqual(findElements(settingsContainer, (el) => el.cls === "ima-share-sync-settings-version")[0].text, `当前版本 v${sourceManifest.version}`, "settings should display the installed manifest version");
   const supportCards = findElements(settingsContainer, (el) => el.cls === "ima-share-sync-support");
   assert.strictEqual(supportCards.length, 1, "settings should contain one GitHub support card");
   assert.strictEqual(settingsContainer.children[0], supportCards[0], "support card should appear at the top");

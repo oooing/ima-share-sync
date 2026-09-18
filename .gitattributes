@@ -1,0 +1,3 @@
+# Keep bundled PowerShell text identical across developer and release checkouts.
+* text=auto eol=lf
+*.png binary
