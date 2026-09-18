@@ -11,7 +11,8 @@
   <a href="https://github.com/oooing/ima-share-sync/releases/tag/0.1.1">下载 0.1.1</a> ·
   <a href="#快速开始">快速开始</a> ·
   <a href="#使用前请了解">使用边界</a> ·
-  <a href="https://github.com/oooing/ima-share-sync/issues">反馈问题</a>
+  <a href="https://github.com/oooing/ima-share-sync/issues">反馈问题</a> ·
+  <a href="#english">English</a>
 </p>
 
 ---
@@ -196,3 +197,39 @@ npm run build
 代码采用 [MIT License](LICENSE)。相关产品名称与品牌标识属于各自权利人。
 
 如果它让你少做了几次复制粘贴，欢迎在 GitHub 点个 **Star**，也欢迎反馈真实使用场景。
+
+---
+
+## English
+
+**Save shared reading to your own knowledge base.** IMA Share Sync imports text articles you can access in the IMA Windows desktop app into an Obsidian folder as local Markdown notes. It is an independent, MIT-licensed community project, not an official IMA, Tencent, or Obsidian product.
+
+### A typical workflow
+
+You read a daily industry briefing in an IMA shared knowledge base, but keep your research and conclusions in Obsidian. Instead of opening, copying, formatting, and checking each article by hand, configure the source folder once and click **立即同步 (Sync now)**. With the default no-overwrite setting, recognized saved articles are skipped, and new articles can become searchable, linkable notes. Checking the latest seven articles means checking seven candidates, not importing seven new notes.
+
+### Installation
+
+Requirements: Windows 10 or later, Obsidian 1.11.4 or later, and an installed, signed-in IMA desktop client with access to the source. The current extractor targets the supported Chinese IMA sharing interface. No other Obsidian plugins are required.
+
+1. Download `main.js`, `manifest.json`, and `styles.css` from the [latest GitHub release](https://github.com/oooing/ima-share-sync/releases/latest).
+2. Place them in `<your vault>/.obsidian/plugins/ima-speed-sync/`.
+3. Enable **IMA Share Sync** under **Settings → Community plugins**. Restart Obsidian if the plugin list has not refreshed.
+4. When upgrading, replace only those three files. Keep `data.json` to preserve your settings and sync history.
+
+### Usage
+
+1. Open the plugin settings and enter the exact IMA knowledge-base name, source folder name, and a destination folder relative to the current vault.
+2. Use the general-text mode for ordinary articles and select how many recent candidates to check.
+3. Click **立即同步 (Sync now)** and approve the first-use local automation consent. Manual sync does not add a countdown. Startup sync is optional and off by default; when enabled, it shows a five-second preflight prompt by default.
+4. Read saved Markdown in the destination folder. Open **同步日志 (Sync logs)** inside the plugin sidebar to inspect past runs, errors, and results, with 20 runs per page. Collapsing the log does not delete it.
+
+The installed version is shown beside the sidebar title and in settings. Sync can be stopped from the operation card. No-overwrite mode does not check saved articles for newer revisions. PDFs, images, attachments, embedded cards, and complex tables are not fully exported. Changes to IMA's interface can affect extraction.
+
+### Privacy and desktop permissions
+
+The plugin runs bundled PowerShell code and Windows UI Automation through `child_process`. It may launch or display IMA windows; it is not a fully headless service. Avoid interacting with the IMA article being read. It does not use global select-all/copy or the clipboard, and optional foreground fallback is off by default.
+
+Local filesystem access outside the vault is used for temporary scripts, article extraction results, and operation-card communication under `%TEMP%/ima-speed-sync/run-*` and `%TEMP%/ima-operation-card-*`. Cleanup is attempted when a run ends, but a crash can leave temporary files. Diagnostics are stored in `%LOCALAPPDATA%/ima-speed-sync/sync.log`; the IMA installation path under `%LOCALAPPDATA%` may be checked to launch the client. Logs may contain article titles; inspect and redact them before sharing.
+
+You need an IMA account and permission to save the source content. IMA itself uses its network service; this plugin has no telemetry, custom upload server, or password collection. GitHub links open only when clicked. It does not download executable dependencies or update itself. See [technical details](docs/TECHNICAL.md) and [security information](SECURITY.md).
