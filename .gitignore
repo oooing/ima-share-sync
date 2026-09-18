@@ -1,0 +1,18 @@
+node_modules/
+.npm-cache/
+dist/
+main.js
+data.json
+*.log
+*.tmp
+.DS_Store
+Thumbs.db
+
+# Local credentials, vault data, and private desktop acceptance reports.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+.obsidian/
+tests/SMOKE*.md

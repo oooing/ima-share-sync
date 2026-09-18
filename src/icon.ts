@@ -1,0 +1,16 @@
+// Selected design: Product/Logo/2026-09-18-reference-traced-six/01-panda-book.svg.
+// Toolbar refinement: omit the four page text lines; keep the book outline and spine.
+// Obsidian custom icons use a 100 x 100 canvas. Preserve the original 256-grid paths.
+export const IMA_SHARE_SYNC_ICON_ID = "ima-share-sync-panda-book";
+export const IMA_SHARE_SYNC_ICON_SVG = `<g transform="scale(0.390625)" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+<path d="M45 160V61.67A40.67 40.67 0 0 1 85.67 21H170.33A40.67 40.67 0 0 1 211 61.67V160" stroke-width="14.933333333333332"/>
+<g stroke-width="10.666666666666666">
+<ellipse cx="67.41" cy="47.97" rx="14.77" ry="24.36" transform="rotate(36 67.41 47.97)"/>
+<ellipse cx="188.59" cy="47.97" rx="14.77" ry="24.36" transform="rotate(-36 188.59 47.97)"/>
+<ellipse cx="96.46" cy="110.61" rx="16.6" ry="24.36" transform="rotate(36 96.46 110.61)"/>
+<ellipse cx="159.54" cy="110.61" rx="16.6" ry="24.36" transform="rotate(-36 159.54 110.61)"/>
+</g>
+<ellipse cx="128" cy="131.49" rx="9.13" ry="6.79" fill="currentColor" stroke="none"/>
+<path d="M24 161C65 158 102 169 128 188C154 169 191 158 232 161V218C191 216 154 225 128 241C102 225 65 216 24 218Z" stroke-width="14.933333333333332"/>
+<path d="M128 188V241" stroke-width="10.666666666666666"/>
+</g>`;

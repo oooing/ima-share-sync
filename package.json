@@ -1,0 +1,31 @@
+{
+  "name": "ima-share-sync",
+  "version": "0.1.0",
+  "description": "Windows Obsidian plugin for syncing IMA shared text articles to local Markdown notes.",
+  "private": true,
+  "license": "MIT",
+  "scripts": {
+    "build": "node esbuild.config.mjs production",
+    "dev": "node esbuild.config.mjs watch",
+    "lint": "eslint src/**/*.ts",
+    "typecheck": "tsc --noEmit",
+    "test:js": "node tests/test-main.cjs",
+    "test:ps": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/test-sync.ps1 && powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/test-general.ps1",
+    "test:card": "node tests/test-operation-card.cjs",
+    "test": "npm run build && npm run test:js && npm run test:ps && npm run test:card",
+    "verify:release": "node scripts/verify-release.mjs",
+    "check": "npm run verify:release && npm run lint && npm run typecheck && npm test"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.1",
+    "@typescript-eslint/parser": "^8.67.0",
+    "esbuild": "^0.28.2",
+    "eslint": "^9.39.5",
+    "eslint-plugin-obsidianmd": "^0.4.1",
+    "obsidian": "^1.13.1",
+    "typescript": "5.9.3"
+  }
+}

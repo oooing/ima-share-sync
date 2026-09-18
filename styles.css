@@ -1,0 +1,213 @@
+.ima-share-sync-has-warning {
+  position: relative;
+}
+
+.ima-share-sync-has-warning::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-warning);
+  box-shadow: 0 0 0 2px var(--background-secondary);
+  pointer-events: none;
+}
+
+.ima-share-sync-status,
+.ima-share-sync-report {
+  margin-block: 12px;
+  padding: 12px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  font-size: var(--font-ui-small);
+  overflow-wrap: anywhere;
+}
+
+.ima-share-sync-status p:first-child {
+  color: var(--text-muted);
+}
+
+.ima-share-sync-report summary {
+  cursor: pointer;
+}
+
+.ima-share-sync-status {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.ima-share-sync-history-list {
+  max-height: 55vh;
+  overflow-y: auto;
+}
+
+.ima-share-sync-latest-status {
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+}
+
+.ima-share-sync-report[open] {
+  border-color: var(--interactive-accent);
+}
+
+.ima-share-sync-history-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.ima-share-sync-history:empty {
+  display: none;
+}
+
+.ima-share-sync-history:not(:empty) {
+  padding-bottom: 16px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.ima-share-sync-history .ima-speed-sync-pagination {
+  flex-wrap: wrap;
+}
+
+.ima-share-sync-history .ima-speed-sync-page-status {
+  flex: 1;
+}
+
+.ima-share-sync-notice-details {
+  display: block;
+  margin-top: 8px;
+}
+
+.ima-share-sync-support {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 24px;
+  padding: 16px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 16px;
+  background: linear-gradient(110deg, rgba(214, 165, 39, 0.1), transparent 65%),
+    var(--background-secondary);
+}
+
+.ima-share-sync-support-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 40px;
+  height: 40px;
+  border-radius: 12px;
+  color: var(--text-warning);
+  background: rgba(214, 165, 39, 0.12);
+}
+
+.ima-share-sync-support-icon svg {
+  width: 22px;
+  height: 22px;
+}
+
+.ima-share-sync-support-copy {
+  flex: 1 1 220px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.ima-share-sync-support-title {
+  color: var(--text-normal);
+  font-weight: var(--font-semibold);
+  line-height: 1.5;
+}
+
+.ima-share-sync-support-description {
+  margin-top: 2px;
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+  line-height: 1.5;
+}
+
+.ima-share-sync-support-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 1 auto;
+  min-height: var(--input-height);
+  max-width: 100%;
+  padding: 8px 16px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 999px;
+  color: var(--text-normal);
+  background: var(--interactive-normal);
+  box-shadow: var(--input-shadow);
+  font-size: var(--font-ui-small);
+  font-weight: var(--font-semibold);
+  text-align: center;
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+
+.ima-share-sync-support-link:hover {
+  color: var(--text-normal);
+  background: var(--interactive-hover);
+  text-decoration: none;
+}
+
+.ima-share-sync-support-link:focus-visible {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: 3px;
+}
+
+.ima-speed-sync-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--size-2-2);
+  margin-bottom: var(--size-4-3);
+}
+
+.ima-speed-sync-split-button {
+  display: inline-flex;
+}
+
+.ima-speed-sync-split-button > button:first-child {
+  border-start-end-radius: 0;
+  border-end-end-radius: 0;
+}
+
+.ima-speed-sync-split-button > button:last-child {
+  min-width: var(--size-4-6);
+  padding-inline: var(--size-2-2);
+  border-inline-start: 1px solid var(--background-modifier-border);
+  border-start-start-radius: 0;
+  border-end-start-radius: 0;
+}
+
+.ima-speed-sync-list {
+  padding-inline-start: var(--size-4-5);
+}
+
+.ima-speed-sync-list button {
+  height: auto;
+  min-height: var(--input-height);
+  text-align: start;
+  white-space: normal;
+}
+
+.ima-speed-sync-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--size-2-2);
+  margin-top: var(--size-4-3);
+}
+
+.ima-speed-sync-page-status {
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  text-align: center;
+}

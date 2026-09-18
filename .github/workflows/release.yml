@@ -1,0 +1,37 @@
+name: Release
+
+on:
+  push:
+    tags:
+      # GitHub uses glob patterns here. The validation step below enforces x.y.z.
+      - "*.*.*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-node@1e60f620b9541dca151540d0c3c8b92d5b0a1177 # v4.0.3
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Check version, build, and test
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: npm run check
+      - name: Create GitHub release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $notes = "docs/releases/$env:GITHUB_REF_NAME.md"
+          if (Test-Path -LiteralPath $notes) {
+            gh release create $env:GITHUB_REF_NAME dist/main.js dist/manifest.json dist/styles.css --verify-tag --notes-file $notes --title "IMA Share Sync $env:GITHUB_REF_NAME"
+          } else {
+            gh release create $env:GITHUB_REF_NAME dist/main.js dist/manifest.json dist/styles.css --verify-tag --generate-notes --title "IMA Share Sync $env:GITHUB_REF_NAME"
+          }

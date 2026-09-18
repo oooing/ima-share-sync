@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="420" viewBox="0 0 1200 420" role="img" aria-label="IMA Share Sync：把分享内容留在自己的知识库">
+<rect width="1200" height="420" rx="24" fill="#12141d"/>
+<rect x="32" y="32" width="1136" height="356" rx="18" fill="#191d29" stroke="#303648"/>
+<g font-family="Microsoft YaHei UI,Microsoft YaHei,Arial,sans-serif">
+<svg x="64" y="65" width="68" height="68" viewBox="0 0 100 100" color="#bdabfa"><g transform="scale(0.390625)" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+<path d="M45 160V61.67A40.67 40.67 0 0 1 85.67 21H170.33A40.67 40.67 0 0 1 211 61.67V160" stroke-width="14.933333333333332"/>
+<g stroke-width="10.666666666666666">
+<ellipse cx="67.41" cy="47.97" rx="14.77" ry="24.36" transform="rotate(36 67.41 47.97)"/>
+<ellipse cx="188.59" cy="47.97" rx="14.77" ry="24.36" transform="rotate(-36 188.59 47.97)"/>
+<ellipse cx="96.46" cy="110.61" rx="16.6" ry="24.36" transform="rotate(36 96.46 110.61)"/>
+<ellipse cx="159.54" cy="110.61" rx="16.6" ry="24.36" transform="rotate(-36 159.54 110.61)"/>
+</g>
+<ellipse cx="128" cy="131.49" rx="9.13" ry="6.79" fill="currentColor" stroke="none"/>
+<path d="M24 161C65 158 102 169 128 188C154 169 191 158 232 161V218C191 216 154 225 128 241C102 225 65 216 24 218Z" stroke-width="14.933333333333332"/>
+<path d="M128 188V241" stroke-width="10.666666666666666"/>
+</g></svg>
+<text x="154" y="93" fill="#f3f2fb" font-size="34" font-weight="700">IMA Share Sync</text>
+<text x="154" y="123" fill="#a7aec0" font-size="15" letter-spacing="2">WINDOWS · OBSIDIAN · v0.1.0</text>
+<text x="64" y="195" fill="#f0eff7" font-size="33" font-weight="600">把分享里的好内容，留在自己的知识库。</text>
+<text x="64" y="232" fill="#a9b1c5" font-size="18">从 IMA 分享文章到本地 Markdown，少一点搬运，多一点积累。</text>
+<rect x="64" y="276" width="302" height="76" rx="12" fill="#252b3e"/>
+<text x="88" y="307" fill="#9da7c1" font-size="12" letter-spacing="2">01 / SOURCE</text>
+<text x="88" y="334" fill="#efeafa" font-size="20">IMA 分享文章</text>
+<path d="M382 314h28m-8-8 8 8-8 8" fill="none" stroke="#717e9a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="426" y="276" width="302" height="76" rx="12" fill="#2c2740"/>
+<text x="450" y="307" fill="#b9a3ed" font-size="12" letter-spacing="2">02 / SYNC</text>
+<text x="450" y="334" fill="#efeafa" font-size="20">读取文字 · 保存笔记</text>
+<path d="M744 314h28m-8-8 8 8-8 8" fill="none" stroke="#717e9a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="788" y="276" width="348" height="76" rx="12" fill="#252b3e"/>
+<text x="812" y="307" fill="#9da7c1" font-size="12" letter-spacing="2">03 / YOUR KNOWLEDGE</text>
+<text x="812" y="334" fill="#efeafa" font-size="20">Obsidian · 继续整理与连接</text>
+</g></svg>
