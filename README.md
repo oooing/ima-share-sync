@@ -8,7 +8,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/oooing/ima-share-sync/releases/tag/0.1.1">下载 0.1.1</a> ·
+  <a href="https://github.com/oooing/ima-share-sync/releases/tag/0.1.2">下载 0.1.2</a> ·
   <a href="#快速开始">快速开始</a> ·
   <a href="#使用前请了解">使用边界</a> ·
   <a href="https://github.com/oooing/ima-share-sync/issues">反馈问题</a> ·
@@ -63,7 +63,7 @@
 
 ### 2 · 安装插件
 
-从 [0.1.1 发布页](https://github.com/oooing/ima-share-sync/releases/tag/0.1.1) 下载这三个文件：
+从 [0.1.2 发布页](https://github.com/oooing/ima-share-sync/releases/tag/0.1.2) 下载这三个文件：
 
 ```text
 你的 Obsidian 仓库/
@@ -97,7 +97,7 @@
 
 首次使用需要确认本地自动化授权。之后手动点击会直接开始，**不再额外倒计时**。
 
-同步完成后，到目标文件夹阅读新笔记。也可以在插件侧栏点击 **同步日志**，展开每次运行结果；再次点击入口或「收起」即可折叠，不会删除记录。
+同步完成后，在侧栏首页点击 **文章** 进入列表，点击标题直接打开 Obsidian 中对应的笔记。点击 **同步日志** 进入独立日志列表，每页 20 条，单条记录可展开查看结果和错误；左上角箭头返回首页，保留页码，不会删除记录。
 
 插件标题旁和设置页会显示当前安装的版本号，方便确认更新是否生效。
 
@@ -186,6 +186,7 @@ npm run build
 构建产物在 `dist/`。完整检查覆盖版本一致性、代码规范、类型、JavaScript 行为、PowerShell 提取逻辑和原生提示框；自动化测试不等同于所有 IMA 版本的实机兼容性保证。
 
 - [技术说明与已知限制](docs/TECHNICAL.md)
+- [0.1.2 更新说明](docs/releases/0.1.2.md)
 - [0.1.1 更新说明](docs/releases/0.1.1.md)
 - [安全与隐私说明](SECURITY.md)
 - [提交问题或建议](https://github.com/oooing/ima-share-sync/issues)
@@ -222,7 +223,7 @@ Requirements: Windows 10 or later, Obsidian 1.11.4 or later, and an installed, s
 1. Open the plugin settings and enter the exact IMA knowledge-base name, source folder name, and a destination folder relative to the current vault.
 2. Use the general-text mode for ordinary articles and select how many recent candidates to check.
 3. Click **立即同步 (Sync now)** and approve the first-use local automation consent. Manual sync does not add a countdown. Startup sync is optional and off by default; when enabled, it shows a five-second preflight prompt by default.
-4. Read saved Markdown in the destination folder. Open **同步日志 (Sync logs)** inside the plugin sidebar to inspect past runs, errors, and results, with 20 runs per page. Collapsing the log does not delete it.
+4. Open **文章 (Articles)** from the sidebar home, then click a title to open its note directly in Obsidian. Open **同步日志 (Sync logs)** for a separate history list with 20 runs per page; expand individual records for results and errors. The top-left arrow returns home without deleting records or resetting the page number.
 
 The installed version is shown beside the sidebar title and in settings. Sync can be stopped from the operation card. No-overwrite mode does not check saved articles for newer revisions. PDFs, images, attachments, embedded cards, and complex tables are not fully exported. Changes to IMA's interface can affect extraction.
 

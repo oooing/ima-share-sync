@@ -1,7 +1,7 @@
 {
   "id": "ima-speed-sync",
   "name": "IMA Share Sync",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "minAppVersion": "1.11.4",
   "description": "Sync IMA shared text articles to local Markdown notes using Windows desktop automation.",
   "author": "oooin",

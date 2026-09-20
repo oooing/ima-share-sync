@@ -1,6 +1,6 @@
 {
   "name": "ima-share-sync",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Windows Obsidian plugin for syncing IMA shared text articles to local Markdown notes.",
   "private": true,
   "license": "MIT",

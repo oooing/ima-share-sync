@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<title>IMA Share Sync · 导航验收</title>
+<link rel="stylesheet" href="/styles.css">
+<style>
+:root{color-scheme:dark;--text-normal:#ddd;--text-muted:#999;--background-secondary:#252525;--background-modifier-border:#404040;--background-modifier-hover:#333;--interactive-accent:#a88bfa;--font-ui-small:13px;--font-ui-smaller:12px;--input-height:30px;--size-2-2:8px;--size-4-3:12px;--size-4-6:24px}
+body{margin:0;background:#181818;color:var(--text-normal);font:14px/1.6 system-ui,sans-serif}
+:root{--background-primary:#202020}
+aside{width:min(352px,100vw);height:100vh;box-sizing:border-box;overflow:auto;background:#202020;padding:16px;border-right:1px solid #404040}
+button{font:inherit;color:inherit;background:#303030;border:1px solid #444;border-radius:6px;padding:5px 10px;cursor:pointer}button:disabled{opacity:.35;cursor:default}button:focus-visible,summary:focus-visible{outline:2px solid #a88bfa}h3{font-size:19px}h4{font-size:15px}a{color:#b69afa}p{margin:8px 0}
+</style>
+<aside id="panel" aria-label="IMA Share Sync 插件侧栏"></aside>
+<main id="note" aria-label="模拟主编辑区" style="position:absolute;left:380px;top:24px" tabindex="-1"></main>
+<script>
+// Only Obsidian host APIs are mocked; navigation and CSS come from dist.
+HTMLElement.prototype.empty=function(){this.replaceChildren()};
+HTMLElement.prototype.setText=function(text){this.textContent=text};
+HTMLElement.prototype.setAttr=function(k,v){this.setAttribute(k,v)};
+HTMLElement.prototype.toggleClass=function(k,v){this.classList.toggle(k,v)};
+HTMLElement.prototype.createEl=function(tag,o={}){const el=document.createElement(tag);if(o.text)el.textContent=o.text;if(o.cls)el.className=o.cls;for(const [k,v] of Object.entries(o.attr||{}))el.setAttribute(k,v);this.append(el);return el};
+HTMLElement.prototype.createDiv=function(o){return this.createEl('div',o)};
+HTMLElement.prototype.createSpan=function(o){return this.createEl('span',o)};
+class Component{load(){} unload(){}}
+class ItemView extends Component{constructor(leaf){super();this.leaf=leaf;this.contentEl=document.getElementById('panel')}registerEvent(){}addChild(c){c.load();return c}removeChild(c){c.unload()}}
+class TFile{constructor(i){this.path=`Target/速看-09${String(i).padStart(2,'0')}.md`;this.basename=this.path.split('/')[1].slice(0,-3);this.extension='md';this.stat={ctime:Date.now()-i*86400000}}}
+class TFolder{constructor(){this.children=Array.from({length:25},(_,i)=>new TFile(i+1))}}
+const folder=new TFolder();let creator;const leaf={};
+const reports=Array.from({length:45},(_,i)=>({id:`fixture-${i}`,finishedAt:Date.now()-i*3600000,interactive:i%2===0,status:i%3===0?'failed':'success',read:false,summary:i%3===0?'新增 1 篇，跳过 5 篇，失败 1 篇。':'新增 2 篇，跳过 5 篇。',errors:i%3===0?[{title:'速看-0913',message:'正文未读取完整，请稍后重试。'}]:[]}));
+class Plugin{constructor(){this.manifest={version:'0.1.1'};this.app={vault:{getAbstractFileByPath:p=>p==='Target'?folder:folder.children.find(f=>f.path===p),on:()=>({}),cachedRead:async()=> '# 每日行业简报\n\n今天的重点信息和分享内容。\n\n[查看来源](https://example.com)\n\n---\n\n这是保存在 Obsidian 中的正文。'},workspace:{getLeavesOfType:()=>leaf.view?[leaf]:[],revealLeaf:async()=>{},onLayoutReady:()=>{},getLeaf:()=>({openFile:async()=>{}})}}}async loadData(){return{autoSync:false,destinationPath:'Target',syncReports:reports}}async saveData(){}addSettingTab(){}registerView(t,c){creator=c}addRibbonIcon(){return document.createElement('button')}addCommand(){}}
+class PluginSettingTab{constructor(app,plugin){this.app=app;this.plugin=plugin}}
+const obsidian={Component,ItemView,Plugin,PluginSettingTab,TFile,TFolder,Modal:class{},FileSystemAdapter:class{},Platform:{isWin:false},Notice:class{},Menu:class{},Setting:class{},addIcon(){},setIcon(){},normalizePath:p=>p.replaceAll('\\','/'),MarkdownRenderer:{async render(app,text,el){for(const line of text.split('\n')){if(line.startsWith('# '))el.createEl('h1',{text:line.slice(2)});else if(line==='---')el.createEl('hr');else if(line.startsWith('[查看来源]'))el.createEl('a',{text:'查看来源',attr:{href:'https://example.com'}});else if(line)el.createEl('p',{text:line})}}}};
+window.module={exports:{}};
+obsidian.setIcon=(el,name)=>{if(name!=='arrow-left')return;const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');svg.setAttribute('viewBox','0 0 24 24');svg.setAttribute('fill','none');svg.setAttribute('stroke','currentColor');svg.setAttribute('stroke-width','2');svg.setAttribute('stroke-linecap','round');svg.setAttribute('stroke-linejoin','round');const path=document.createElementNS('http://www.w3.org/2000/svg','path');path.setAttribute('d','m12 19-7-7 7-7 M5 12h14');svg.append(path);el.append(svg)};
+window.require=name=>{if(name==='obsidian')return obsidian;if(name==='crypto')return{randomUUID:()=>crypto.randomUUID()};if(name==='child_process')return{spawn(){throw Error('Desktop automation disabled in fixture')}};return {}};
+</script>
+<script src="/plugin.js"></script>
+<script>
+(async()=>{const Export=module.exports.default||module.exports;const plugin=new Export();plugin.app.vault.configDir='.obsidian';plugin.app.workspace.getLeaf=()=>({async openFile(file){const note=document.getElementById('note');note.empty();note.createEl('h2',{text:file.basename});note.createEl('p',{text:'已直接打开笔记（主编辑区验收桩）'});note.focus()}});await plugin.onload();leaf.view=creator(leaf);await leaf.view.onOpen()})().catch(e=>{document.getElementById('panel').textContent=e.stack;console.error(e)});
+</script>
+</html>

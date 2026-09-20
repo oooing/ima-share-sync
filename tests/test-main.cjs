@@ -102,8 +102,13 @@ class Element {
     this.children = [];
     this.disabled = false;
     this.listeners = new Map();
+    this.dataset = { navKey: options.attr?.["data-nav-key"] };
+    this.scrollTop = 0;
   }
   empty() { this.children = []; }
+  focus() { this.focused = true; }
+  querySelectorAll(selector) { return findElements(this, el => selector === "[data-nav-key]" ? !!el.dataset.navKey : el.tag === selector); }
+  querySelector(selector) { return this.querySelectorAll(selector)[0] || null; }
   setText(text) { this.text = text; }
   createDiv(options = {}) {
     const child = new Element("div", options);
@@ -185,6 +190,7 @@ class Plugin {
           readPaths.push(file.path);
           return contents.get(file.path) || "";
         },
+        async cachedRead(file) { return contents.get(file.path) || ""; },
         async process(file, callback) {
           contents.set(file.path, callback(contents.get(file.path) || ""));
         },
@@ -229,6 +235,8 @@ class ItemView {
     this.contentEl = new Element();
   }
   registerEvent() {}
+  addChild(child) { child.loaded = true; return child; }
+  removeChild(child) { child.loaded = false; }
 }
 
 class Modal {
@@ -290,6 +298,14 @@ function findElements(root, predicate) {
   return matches;
 }
 
+function mountPluginView(plugin) {
+  const leaf = {};
+  leaf.view = registeredView.creator(leaf);
+  plugin.app.workspace.getLeavesOfType = () => [leaf];
+  leaf.view.render();
+  return leaf.view;
+}
+
 async function waitForFixture(predicate) {
   const deadline = Date.now() + 5000;
   while (!predicate()) {
@@ -314,6 +330,8 @@ Module._load = function (request, parent, isMain) {
   if (request === "obsidian") {
     return {
       FileSystemAdapter,
+      Component: class {},
+      MarkdownRenderer: { async render(app, text, body) { body.setText(text); } },
       ItemView,
       Menu,
       Modal,
@@ -565,11 +583,7 @@ Module._load = function (request, parent, isMain) {
   vaultEventCallbacks.get("modify")(datedFile);
   await new Promise((resolve) => setTimeout(resolve, 200));
   assert.strictEqual(scheduledRenderCount, 1, "bursts of destination changes must be debounced");
-  let articleLists = findElements(view.contentEl, (element) => element.cls === "ima-speed-sync-list");
-  assert.strictEqual(articleLists.length, 1);
-  assert.strictEqual(articleLists[0].children.length, 20, "the first page must contain 20 articles");
-  let pageStatuses = findElements(view.contentEl, (element) => element.cls === "ima-speed-sync-page-status");
-  assert.strictEqual(pageStatuses[0].text, "第 1 / 2 页 · 共 25 篇");
+  assert.equal(findElements(view.contentEl, el => el.tag === "details" || el.tag === "ul").length, 0, "home exposes entries, not embedded lists or accordions");
   const settingsButton = findElements(
     view.contentEl,
     (element) => element.tag === "button" && element.text === "设置",
@@ -627,6 +641,11 @@ Module._load = function (request, parent, isMain) {
   assert.deepStrictEqual(lastMenu.items.map((item) => item.checked), [false, true]);
   await lastMenu.items[0].invoke();
   assert.strictEqual(plugin.settings.overwriteSameName, false);
+  findElements(view.contentEl, el => el.dataset.navKey === "文章")[0].click();
+  let articleLists = findElements(view.contentEl, el => el.cls === "ima-speed-sync-list");
+  assert.equal(articleLists[0].children.length, 20);
+  let pageStatuses = findElements(view.contentEl, el => el.cls === "ima-speed-sync-page-status");
+  assert.equal(pageStatuses[0].text, "第 1 / 2 页 · 共 25 篇");
   const nextButton = findElements(
     view.contentEl,
     (element) => element.tag === "button" && element.text === "下一页",
@@ -637,6 +656,34 @@ Module._load = function (request, parent, isMain) {
   assert.strictEqual(articleLists[0].children.length, 5, "the second page must contain the remainder");
   pageStatuses = findElements(view.contentEl, (element) => element.cls === "ima-speed-sync-page-status");
   assert.strictEqual(pageStatuses[0].text, "第 2 / 2 页 · 共 25 篇");
+  const articleRow = findElements(articleLists[0], el => el.tag === "button")[0];
+  const articlePath = articleRow.dataset.navKey;
+  const openedArticleFiles = [];
+  const originalGetLeaf = plugin.app.workspace.getLeaf;
+  plugin.app.workspace.getLeaf = (newLeaf) => {
+    assert.equal(newLeaf, false, "article click reuses the main workspace leaf");
+    return { async openFile(file, options) { openedArticleFiles.push({ file, options }); } };
+  };
+  view.contentEl.scrollTop = 87;
+  articleRow.click();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(openedArticleFiles.length, 1, "one click opens exactly one note");
+  assert.equal(openedArticleFiles[0].file.path, articlePath);
+  assert.equal(openedArticleFiles[0].options.active, true, "the note becomes active in the main workspace");
+  plugin.app.workspace.getLeaf = originalGetLeaf;
+  assert.equal(findElements(view.contentEl, el => el.tag === "ul").length, 1, "article list stays visible in sidebar");
+  assert.equal(findElements(view.contentEl, el => el.text === "文章详情" || el.text === "在笔记中打开").length, 0);
+  assert.ok(findElements(view.contentEl, el => el.text === "第 2 / 2 页 · 共 25 篇").length);
+  assert.equal(view.contentEl.scrollTop, 87);
+  const backButton = findElements(view.contentEl, el => el["aria-label"] === "返回首页")[0];
+  assert.equal(backButton.cls, "ima-share-sync-back-button");
+  assert.equal(backButton.title, "返回首页");
+  assert.ok(findElements(backButton, el => el.icon === "arrow-left" && el["aria-hidden"] === "true").length);
+  findElements(view.contentEl, el => el["aria-label"] === "返回首页")[0].click();
+  assert.equal(findElements(view.contentEl, el => el.dataset.navKey === "文章")[0].focused, true);
+  findElements(view.contentEl, el => el.dataset.navKey === "文章")[0].click();
+  assert.ok(findElements(view.contentEl, el => el.text === "第 2 / 2 页 · 共 25 篇").length, "reentering preserves list pagination");
+  console.log("PASS: compact accessible navigation, direct active note opening and preserved sidebar pagination/scroll");
 
   const cachedMetadataFile = new TFile("Target/缓存元数据文章.md");
   targetFolder.children.push(cachedMetadataFile);
@@ -658,7 +705,7 @@ Module._load = function (request, parent, isMain) {
   assert.strictEqual(cachedIndex.bySourceKey.get("sha256:cached"), cachedMetadataFile);
 
   await ribbonCallback();
-  assert.strictEqual(detachedViewType, registeredView.type);
+  assert.strictEqual(detachedViewType, undefined, "opening sidebar never destroys existing navigation state");
   assert.strictEqual(revealedLeaf, rightLeaf);
   assert.strictEqual(viewState.type, registeredView.type);
 
@@ -1003,7 +1050,7 @@ Module._load = function (request, parent, isMain) {
   // Exercise notification policy against the built plugin without operating the desktop.
   const notificationPlugin = new ImaSpeedSyncPlugin();
   await notificationPlugin.onload();
-  notificationPlugin.renderSyncStatus(new Element());
+  mountPluginView(notificationPlugin);
   const notificationTab = settingTabs.at(-1);
   assert.deepStrictEqual([
     notificationPlugin.settings.notificationsEnabled,
@@ -1055,9 +1102,10 @@ Module._load = function (request, parent, isMain) {
   assert.strictEqual(notices.length, noticeBaseline, "master-off mutes errors, manual results and operation notices");
   assert.ok(notificationPlugin.syncReports[0].errors.length === 2, "muting never erases diagnostics");
   const statusContainer = new Element();
-  notificationPlugin.renderSyncStatus(statusContainer);
+  notificationPlugin.renderHistoryEntry(statusContainer);
   findElements(statusContainer, (el) => el.text.startsWith("同步日志（"))[0].click();
   assert.ok(findElements(notificationPlugin.historyPanel.contentEl, el => el.tag === "h4" && el.text === "同步日志").length);
+  notificationPlugin.historyPanel.close();
   await notificationPlugin.saveQueue;
   const savedNotificationData = JSON.parse(JSON.stringify(notificationPlugin.savedData));
   const reloadedPlugin = new ImaSpeedSyncPlugin();
@@ -1153,11 +1201,12 @@ Module._load = function (request, parent, isMain) {
   const malformedPlugin = new ImaSpeedSyncPlugin();
   malformedPlugin.loadData = async () => ({ ...savedNotificationData, notificationsEnabled: "false", syncReports: [null, { status: "other" }, { ...savedNotificationData.syncReports[0], errors: [null, {}, { title: "<script>", message: "<b>plain text</b>" }] }] });
   await malformedPlugin.onload();
+  mountPluginView(malformedPlugin);
   assert.strictEqual(malformedPlugin.settings.notificationsEnabled, true, "invalid toggle values recover to safe defaults");
   assert.strictEqual(malformedPlugin.syncReports.length, 1);
   assert.deepStrictEqual(malformedPlugin.syncReports[0].errors, [{ title: "<script>", message: "<b>plain text</b>" }]);
   const malformedStatus = new Element();
-  malformedPlugin.renderSyncStatus(malformedStatus);
+  malformedPlugin.renderHistoryEntry(malformedStatus);
   findElements(malformedStatus, (el) => el.tag === "button")[0].click();
   assert.ok(findElements(malformedPlugin.historyPanel.contentEl, (el) => el.tag === "p" && el.text === "<script>：<b>plain text</b>").length, "error text is rendered as text, never HTML");
   notificationPlugin.settings.notificationsEnabled = true;
@@ -1287,7 +1336,7 @@ Module._load = function (request, parent, isMain) {
 
   const unreadPlugin = new ImaSpeedSyncPlugin();
   await unreadPlugin.onload();
-  unreadPlugin.renderSyncStatus(new Element());
+  mountPluginView(unreadPlugin);
   const failedReport = () => ({ finishedAt: 1234567890, interactive: false, status: "failed", summary: "同一异常", errors: [{ title: "测试", message: "未读取完整" }] });
   await unreadPlugin.recordSyncReport(failedReport());
   const oldReport = unreadPlugin.syncReports[0];
@@ -1322,11 +1371,10 @@ Module._load = function (request, parent, isMain) {
   }));
   historyPlugin.loadData = async () => ({ syncReports: historyFixtures, notificationsEnabled: false });
   await historyPlugin.onload();
-  const inlineHistoryContainer = new Element();
-  historyPlugin.renderSyncStatus(inlineHistoryContainer);
+  const historyView = mountPluginView(historyPlugin);
+  const inlineHistoryContainer = historyView.contentEl;
   const modalCountBeforeHistory = openedModals.length;
-  const existingHistoryLeaf = { view: {} };
-  historyPlugin.app.workspace.getLeavesOfType = () => [existingHistoryLeaf];
+  const existingHistoryLeaf = historyPlugin.app.workspace.getLeavesOfType()[0];
   historyPlugin.app.workspace.detachLeavesOfType = () => { throw new Error("opening inline history must reuse the existing sidebar"); };
   assert.equal(historyPlugin.syncReports.length, 45, "loading no longer truncates full history");
   historyPlugin.openSyncHistory();
@@ -1335,7 +1383,7 @@ Module._load = function (request, parent, isMain) {
   assert.equal(revealedLeaf, existingHistoryLeaf, "error/history links reveal the existing plugin sidebar");
   assert.ok(findElements(inlineHistoryContainer, el => el.tag === "h4" && el.text === "同步日志").length, "history is mounted inside the plugin panel");
   const recordsOnPage = () => findElements(historyModal.contentEl, el => el.tag === "details");
-  const historyButton = (text) => findElements(historyModal.contentEl, el => el.tag === "button" && el.text === text)[0];
+  const historyButton = (text) => findElements(historyModal.contentEl, el => el.tag === "button" && (text === "‹ 返回" ? el["aria-label"] === "返回首页" : el.text === text))[0];
   assert.equal(recordsOnPage().length, 20);
   assert.ok(recordsOnPage().every(el => !el.open), "history details start collapsed");
   assert.equal(historyButton("上一页").disabled, true);
@@ -1343,8 +1391,8 @@ Module._load = function (request, parent, isMain) {
   historyButton("下一页").click();
   assert.equal(recordsOnPage().length, 20);
   assert.ok(findElements(historyModal.contentEl, el => el.text === "第 2 / 3 页 · 共 45 次").length);
-  const refreshedHistoryContainer = new Element();
-  historyPlugin.renderSyncStatus(refreshedHistoryContainer);
+  historyView.render();
+  const refreshedHistoryContainer = historyView.contentEl;
   assert.ok(findElements(refreshedHistoryContainer, el => el.text === "第 2 / 3 页 · 共 45 次").length, "sidebar refresh preserves the history page");
   historyButton("下一页").click();
   assert.equal(recordsOnPage().length, 5);
@@ -1353,16 +1401,18 @@ Module._load = function (request, parent, isMain) {
   assert.equal(recordsOnPage().length, 5, "last-page guard prevents blank extra pages");
   historyButton("上一页").click();
   assert.equal(recordsOnPage().length, 20);
-  historyButton("收起").click();
-  assert.equal(historyModal.contentEl.children.length, 0);
-  assert.equal(historyPlugin.historyPanel, null, "collapse removes the inline log without removing history");
-  assert.equal(findElements(refreshedHistoryContainer, el => el.text === "同步日志（45）")[0]["aria-expanded"], "false");
+  historyButton("‹ 返回").click();
+  assert.equal(findElements(refreshedHistoryContainer, el => el.tag === "details").length, 0, "return removes the log page from home");
+  assert.equal(findElements(refreshedHistoryContainer, el => el.dataset.navKey === "同步日志")[0].focused, true);
+  findElements(refreshedHistoryContainer, el => el.dataset.navKey === "同步日志")[0].click();
+  assert.ok(findElements(historyView.contentEl, el => el.text === "第 2 / 3 页 · 共 45 次").length, "reentering history preserves page");
+  historyButton("‹ 返回").click();
   assert.equal(historyPlugin.syncReports.length, 45, "closing history never removes records");
   await historyPlugin.saveQueue;
   const historyReload = new ImaSpeedSyncPlugin();
   historyReload.loadData = async () => JSON.parse(JSON.stringify(historyPlugin.savedData));
   await historyReload.onload();
-  historyReload.renderSyncStatus(new Element());
+  mountPluginView(historyReload);
   assert.equal(historyReload.syncReports.length, 45, "all pages survive restart");
   await historyReload.recordSyncReport({ finishedAt: 2100000000000, interactive: false, status: "failed", summary: "新错误", errors: [{ title: "新文章", message: "新的原因" }] });
   historyReload.openSyncHistory([historyReload.syncReports.find(report => report.id === "history-24")]);
@@ -1372,25 +1422,24 @@ Module._load = function (request, parent, isMain) {
   assert.ok(findElements(recordsOnPage().find(el => el.open), el => el.text === "文章 24：错误原因 24").length);
   assert.ok(findElements(historyModal.contentEl, el => el.text === "第 2 / 3 页 · 共 46 次").length);
   assert.equal(historyReload.syncReports[0].read, false, "viewing an old error does not acknowledge newer errors");
-  historyButton("收起").click();
+  historyButton("‹ 返回").click();
   historyReload.openSyncHistory();
   historyModal = historyReload.historyPanel;
   assert.equal(recordsOnPage().length, 20);
-  assert.ok(recordsOnPage().every(el => !el.open), "reopening regular history starts collapsed on page one");
+  assert.ok(recordsOnPage().every(el => !el.open), "returning to history keeps page but resets expanded details");
   const emptyHistory = new ImaSpeedSyncPlugin();
   emptyHistory.loadData = async () => null;
   await emptyHistory.onload();
-  const emptyStatus = new Element();
-  emptyHistory.renderSyncStatus(emptyStatus);
+  const emptyView = mountPluginView(emptyHistory);
+  const emptyStatus = emptyView.contentEl;
   findElements(emptyStatus, el => el.text === "同步日志（0）")[0].click();
   historyModal = emptyHistory.historyPanel;
   assert.equal(recordsOnPage().length, 0);
   assert.equal(historyButton("下一页").disabled, true);
   assert.equal(historyButton("上一页").disabled, true);
-  const emptyToggle = findElements(emptyStatus, el => el.text === "同步日志（0）")[0];
-  emptyToggle.click();
-  assert.equal(emptyHistory.historyPanel, null, "the same entry toggles inline history closed");
-  emptyToggle.click();
+  historyButton("‹ 返回").click();
+  assert.equal(findElements(emptyStatus, el => el.tag === "details").length, 0);
+  findElements(emptyStatus, el => el.text === "同步日志（0）")[0].click();
   assert.ok(emptyHistory.historyPanel);
   assert.equal(openedModals.length, modalCountBeforeHistory, "pagination, collapse and error jumps do not open any modal");
   console.log("PASS: complete persistent history, 20-row pagination, collapsed default, focused errors, close/reopen, restart and empty state");

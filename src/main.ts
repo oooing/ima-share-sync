@@ -178,10 +178,21 @@ const PLUGIN_MARKER = "ima-speed-sync";
 const ARTICLES_PER_PAGE = 20;
 const MAX_BASENAME_LENGTH = 120;
 
+function renderPageHeader(container: HTMLElement, title: string, onBack: () => void): void {
+  const header = container.createDiv({ cls: "ima-share-sync-history-header" });
+  const back = header.createEl("button", {
+    cls: "ima-share-sync-back-button", attr: { "aria-label": "返回首页", title: "返回首页" },
+  });
+  setIcon(back.createSpan({ attr: { "aria-hidden": "true" } }), "arrow-left");
+  back.addEventListener("click", onBack);
+  header.createEl("h4", { text: title });
+}
+
 class SyncHistoryPanel {
   contentEl!: HTMLElement;
   private page = 0;
   private focusedId?: string;
+  private focusedRecord?: HTMLDetailsElement;
   private expandedIds = new Set<string>();
 
   constructor(private readonly getReports: () => readonly SyncReport[],
@@ -200,9 +211,7 @@ class SyncHistoryPanel {
 
   private render(): void {
     this.contentEl.empty();
-    const header = this.contentEl.createDiv({ cls: "ima-share-sync-history-header" });
-    header.createEl("h4", { text: "同步日志" });
-    header.createEl("button", { text: "收起" }).addEventListener("click", () => this.close());
+    renderPageHeader(this.contentEl, "同步日志", () => this.close());
     const reports = this.getReports();
     const focusedIndex = this.focusedId ? reports.findIndex((report) => report.id === this.focusedId) : -1;
     if (focusedIndex >= 0) this.page = Math.floor(focusedIndex / SYNC_REPORTS_PER_PAGE);
@@ -241,6 +250,7 @@ class SyncHistoryPanel {
       this.page--;
       this.focusedId = undefined;
       this.render();
+      this.focusPageStart();
     });
     pager.createSpan({ text: `第 ${this.page + 1} / ${pages} 页 · 共 ${reports.length} 次`, cls: "ima-speed-sync-page-status" });
     const next = pager.createEl("button", { text: "下一页" });
@@ -250,13 +260,25 @@ class SyncHistoryPanel {
       this.page++;
       this.focusedId = undefined;
       this.render();
+      this.focusPageStart();
     });
     this.onViewed(this.focusedId ? pageReports.filter((report) => report.id === this.focusedId) : pageReports);
-    focusedRecord?.scrollIntoView?.({ block: "nearest" });
+    this.focusedRecord = focusedRecord;
+  }
+
+  revealFocusedReport(): void {
+    this.focusedRecord?.scrollIntoView?.({ block: "nearest" });
+    this.focusedRecord?.querySelector<HTMLElement>("summary")?.focus({ preventScroll: true });
+  }
+
+  private focusPageStart(): void {
+    this.contentEl.scrollTop = 0;
+    this.contentEl.querySelector<HTMLElement>("button")?.focus({ preventScroll: true });
   }
 
   close(): void {
-    this.contentEl.empty();
+    this.focusedId = undefined;
+    this.expandedIds.clear();
     this.onClosed();
   }
 }
@@ -314,6 +336,28 @@ class ConsentModal extends Modal {
 class ImaSpeedSyncView extends ItemView {
   private currentPage = 0;
   private renderTimer: number | null = null;
+  private page: "home" | "articles" | "history" = "home";
+  private history?: SyncHistoryPanel;
+  private scrollPositions = new Map<string, number>();
+
+  showHistory(panel: SyncHistoryPanel): void {
+    this.history = panel;
+    this.navigate("history");
+    panel.revealFocusedReport();
+  }
+
+  showHome(): void { this.navigate("home", "同步日志"); }
+
+  private navigate(page: typeof this.page, focusKey?: string): void {
+    this.scrollPositions.set(this.page, this.contentEl.scrollTop);
+    this.page = page;
+    this.render();
+    this.contentEl.scrollTop = this.scrollPositions.get(page) ?? 0;
+    const target = focusKey
+      ? Array.from(this.contentEl.querySelectorAll<HTMLElement>("[data-nav-key]")).find((el) => el.dataset.navKey === focusKey)
+      : this.contentEl.querySelector<HTMLElement>("button");
+    target?.focus({ preventScroll: true });
+  }
 
   constructor(
     leaf: WorkspaceLeaf,
@@ -364,6 +408,15 @@ class ImaSpeedSyncView extends ItemView {
 
   render(): void {
     this.contentEl.empty();
+    if (this.page === "history" && this.history) {
+      this.history.mount(this.contentEl);
+      return;
+    }
+    if (this.page === "articles") {
+      renderPageHeader(this.contentEl, "文章", () => this.navigate("home", "文章"));
+      this.renderArticles();
+      return;
+    }
     const heading = this.contentEl.createDiv({ cls: "ima-share-sync-heading" });
     heading.createEl("h3", { text: "IMA Share Sync" });
     heading.createSpan({
@@ -400,6 +453,15 @@ class ImaSpeedSyncView extends ItemView {
 
     this.plugin.renderSyncStatus(this.contentEl);
 
+    const entry = this.contentEl.createEl("button", {
+      text: `文章（${this.plugin.getSortedArticles().length}）`, cls: "ima-share-sync-nav-entry",
+      attr: { "data-nav-key": "文章" },
+    });
+    entry.addEventListener("click", () => this.navigate("articles"));
+    this.plugin.renderHistoryEntry(this.contentEl);
+  }
+
+  private renderArticles(): void {
     const articles = this.plugin.getSortedArticles();
     if (!articles.length) {
       this.contentEl.createEl("p", {
@@ -416,9 +478,9 @@ class ImaSpeedSyncView extends ItemView {
     const list = this.contentEl.createEl("ul", { cls: "ima-speed-sync-list" });
     for (const file of pageArticles) {
       const item = list.createEl("li");
-      const articleButton = item.createEl("button", { text: file.basename });
+      const articleButton = item.createEl("button", { text: file.basename, cls: "ima-share-sync-nav-entry", attr: { "data-nav-key": file.path } });
       articleButton.addEventListener("click", () => {
-        void this.plugin.app.workspace.getLeaf(false).openFile(file);
+        void this.plugin.app.workspace.getLeaf(false).openFile(file, { active: true });
       });
     }
 
@@ -429,6 +491,8 @@ class ImaSpeedSyncView extends ItemView {
       if (this.currentPage === 0) return;
       this.currentPage--;
       this.render();
+      this.contentEl.scrollTop = 0;
+      this.contentEl.querySelector<HTMLElement>("button")?.focus({ preventScroll: true });
     });
 
     pagination.createSpan({
@@ -442,6 +506,8 @@ class ImaSpeedSyncView extends ItemView {
       if (this.currentPage >= totalPages - 1) return;
       this.currentPage++;
       this.render();
+      this.contentEl.scrollTop = 0;
+      this.contentEl.querySelector<HTMLElement>("button")?.focus({ preventScroll: true });
     });
   }
 
@@ -701,8 +767,6 @@ export default class ImaSpeedSyncPlugin extends Plugin {
   private unloaded = false;
   private syncReports: SyncReport[] = [];
   private historyPanel: SyncHistoryPanel | null = null;
-  private historyHost: HTMLElement | null = null;
-  private historyToggle: HTMLButtonElement | null = null;
   private ribbonEl: HTMLElement | null = null;
   private activeNotice: { notice: Notice; interactive: boolean; failed: boolean } | null = null;
   private saveQueue: Promise<void> = Promise.resolve();
@@ -841,7 +905,7 @@ export default class ImaSpeedSyncPlugin extends Plugin {
   }
 
   openSyncHistory(focusedReports?: readonly SyncReport[]): void {
-    this.historyPanel = new SyncHistoryPanel(() => {
+    if (!this.historyPanel || focusedReports?.length) this.historyPanel = new SyncHistoryPanel(() => {
       const reports = [...this.syncReports];
       for (const report of focusedReports ?? []) {
         if (!reports.some((stored) => stored.id === report.id)) reports.push(report);
@@ -850,14 +914,19 @@ export default class ImaSpeedSyncPlugin extends Plugin {
     }, focusedReports?.[0]?.id,
     (viewed) => { void this.markSyncReportsRead(viewed); },
     () => {
-      this.historyPanel = null;
-      this.historyToggle?.setAttr("aria-expanded", "false");
+      for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE)) {
+        if (leaf.view instanceof ImaSpeedSyncView) leaf.view.showHome();
+      }
     });
-    this.historyToggle?.setAttr("aria-expanded", "true");
-    if (this.historyHost) this.historyPanel.mount(this.historyHost);
+    const panel = this.historyPanel;
     const existing = this.app.workspace.getLeavesOfType(VIEW_TYPE)[0];
+    if (existing?.view instanceof ImaSpeedSyncView) existing.view.showHistory(panel);
     const reveal = existing ? this.app.workspace.revealLeaf(existing) : this.activateView();
-    void reveal.catch((error) => { console.error("打开同步日志失败", error); this.notifyManual("无法打开同步日志，请重新打开插件侧栏。"); });
+    void reveal.then(() => {
+      if (existing) return;
+      const view = this.app.workspace.getLeavesOfType(VIEW_TYPE)[0]?.view;
+      if (view instanceof ImaSpeedSyncView) view.showHistory(panel);
+    }).catch((error) => { console.error("打开同步日志失败", error); this.notifyManual("无法打开同步日志，请重新打开插件侧栏。"); });
   }
 
   private async markSyncReportsRead(reports: readonly SyncReport[]): Promise<void> {
@@ -882,12 +951,7 @@ export default class ImaSpeedSyncPlugin extends Plugin {
   renderSyncStatus(containerEl: HTMLElement): void {
     const latest = this.syncReports[0];
     const status = containerEl.createDiv({ cls: "ima-share-sync-status" });
-    this.historyToggle = status.createEl("button", { text: `同步日志（${this.syncReports.length}）` });
-    this.historyToggle.setAttr("aria-expanded", String(!!this.historyPanel));
-    this.historyToggle.addEventListener("click", () => {
-      if (this.historyPanel) this.historyPanel.close();
-      else this.openSyncHistory();
-    });
+    if (!latest && !this.running) status.createSpan({ text: "尚未同步", cls: "ima-share-sync-latest-status" });
     if (this.running) status.createEl("p", { text: "正在同步，可随时取消…" });
     if (latest) {
       status.createSpan({ text: `最近：${latest.status === "failed" ? "有异常" : latest.status === "canceled" ? "已取消" : "已完成"}`, cls: "ima-share-sync-latest-status" });
@@ -896,8 +960,13 @@ export default class ImaSpeedSyncPlugin extends Plugin {
       }
       if (this.reportSaveFailed) status.createEl("p", { text: "同步记录未能写入配置文件，本次结果仅在当前会话保留。" });
     }
-    this.historyHost = containerEl.createDiv({ cls: "ima-share-sync-history" });
-    this.historyPanel?.mount(this.historyHost);
+  }
+
+  renderHistoryEntry(containerEl: HTMLElement): void {
+    containerEl.createEl("button", {
+      text: `同步日志（${this.syncReports.length}）`, cls: "ima-share-sync-nav-entry",
+      attr: { "data-nav-key": "同步日志" },
+    }).addEventListener("click", () => this.openSyncHistory());
   }
 
   private async recordSyncReport(report: SyncReport, showNotice = true): Promise<void> {
@@ -1001,7 +1070,11 @@ export default class ImaSpeedSyncPlugin extends Plugin {
   }
 
   async activateView(): Promise<void> {
-    this.app.workspace.detachLeavesOfType(VIEW_TYPE);
+    const existing = this.app.workspace.getLeavesOfType(VIEW_TYPE)[0];
+    if (existing) {
+      await this.app.workspace.revealLeaf(existing);
+      return;
+    }
     const leaf = this.app.workspace.getRightLeaf(false);
     if (!leaf) {
       this.notifyManual("无法创建 IMA Share Sync 侧边栏。");

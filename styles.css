@@ -66,11 +66,6 @@
   gap: 8px;
 }
 
-.ima-share-sync-history-list {
-  max-height: 55vh;
-  overflow-y: auto;
-}
-
 .ima-share-sync-latest-status {
   color: var(--text-muted);
   font-size: var(--font-ui-smaller);
@@ -81,28 +76,59 @@
 }
 
 .ima-share-sync-history-header {
+  position: sticky;
+  top: 0;
+  z-index: 1;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.ima-share-sync-history:empty {
-  display: none;
-}
-
-.ima-share-sync-history:not(:empty) {
-  padding-bottom: 16px;
-  margin-bottom: 12px;
+  gap: 6px;
+  min-height: 40px;
+  margin-bottom: 10px;
+  padding-block: 4px;
   border-bottom: 1px solid var(--background-modifier-border);
+  background: var(--background-secondary);
 }
 
-.ima-share-sync-history .ima-speed-sync-pagination {
-  flex-wrap: wrap;
+.ima-share-sync-history-header h4 {
+  margin: 0;
+  font-size: var(--font-ui-medium);
+  font-weight: 600;
+  line-height: 1.4;
 }
 
-.ima-share-sync-history .ima-speed-sync-page-status {
-  flex: 1;
+button.ima-share-sync-back-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 32px;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  box-shadow: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+button.ima-share-sync-back-button:hover {
+  color: var(--text-normal);
+  background: var(--background-modifier-hover);
+}
+
+button.ima-share-sync-back-button:focus-visible {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: 2px;
+}
+
+.ima-share-sync-back-button span {
+  display: flex;
+}
+
+.ima-share-sync-back-button svg {
+  width: 18px;
+  height: 18px;
 }
 
 .ima-share-sync-notice-details {
@@ -214,7 +240,41 @@
 }
 
 .ima-speed-sync-list {
-  padding-inline-start: var(--size-4-5);
+  padding: 0;
+  list-style: none;
+}
+
+button.ima-share-sync-nav-entry {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  height: auto;
+  min-height: 44px;
+  margin-block: 6px;
+  padding: 12px;
+  text-align: start;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  box-shadow: none;
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-secondary);
+}
+
+button.ima-share-sync-nav-entry::after {
+  content: "›";
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+
+button.ima-share-sync-nav-entry:hover {
+  background: var(--background-modifier-hover);
+}
+
+button.ima-share-sync-nav-entry:focus-visible {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: 2px;
 }
 
 .ima-speed-sync-list button {
@@ -226,6 +286,7 @@
 
 .ima-speed-sync-pagination {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: var(--size-2-2);
