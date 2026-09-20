@@ -2,15 +2,17 @@
 
 **English** · [简体中文](https://github.com/oooing/ima-share-sync/blob/main/README.zh-CN.md)
 
-![From daily IMA reading to local Markdown and your own research workflow](docs/assets/research-hero-en.svg)
+![Articles others share through IMA become local Obsidian notes for your own research workflow](docs/assets/research-hero-en.svg)
 
-**Keep today's reading. See what changes over time.**
+**Shared by others. Saved for your own research.**
 
-Sync IMA shared text articles to local Markdown in Obsidian. Build a growing source library that you can annotate, search, and use with your own AI agent—without copying each article by hand.
+This is about **articles other people share with you through IMA**, not just content you uploaded yourself. Save shared text you have permission to keep as local Markdown in Obsidian. Annotate and search it alongside your own notes, then analyze it with an agent that can read your local files.
 
 ## Follow companies and industries over time
 
-Read investment research in IMA every day? Keep it in your own vault. With a separately configured agent, compare yesterday, the past 3 / 7 / 30 days, or six months to a year: what changed, what stayed the same, and which ideas need closer investigation?
+For example, you join a shared research library that updates daily—perhaps through a paid subscription. Where your access and local-saving permissions allow it, keep supported research articles and briefings in your own vault rather than only reading them one by one in IMA.
+
+With a separately configured agent, compare yesterday, the past 3 / 7 / 30 days, or six months to a year: what changed, what stayed the same, and which ideas need closer investigation?
 
 > “Compare the past 7 days of robotics research with the previous 30 days. What changed in orders, production timelines, and earnings expectations? Separate new evidence from repeated views, and link to the sources.”
 
@@ -35,6 +37,7 @@ Requires Windows 10+, Obsidian 1.11.4+, and a signed-in IMA desktop app with acc
 - Recognized saved articles are skipped by default. Check results in the sidebar sync logs.
 - Local desktop automation may open IMA windows. You can stop it anytime; this is not a headless service.
 - For text articles; PDFs, images, and attachments are not fully supported.
+- Only sync content you may access and save. This is not a paid-content unlocker or a way to bypass restrictions; viewing access alone does not grant permission to save or redistribute. A local copy does not transfer copyright.
 
 Local files give you control over storage and which tools can read them. Cloud agents or vault-sync services may still upload the content you share with them. The plugin uses no telemetry or custom upload servers; IMA itself requires internet.
 

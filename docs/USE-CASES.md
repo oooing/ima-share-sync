@@ -2,13 +2,15 @@
 
 [← Back to the overview](../README.md) · [简体中文](USE-CASES.zh-CN.md)
 
-Start with IMA text content you have permission to access. Sync it to local Obsidian notes, then use an agent of your choice. These are suggested workflows—not built-in analysis features or customer testimonials.
+Start with **text articles other people share with you through IMA**, not just your own uploads. Where you have permission to access and save them, keep local Markdown copies in Obsidian that you can organize, search, and use with an agent that reads local files. These are suggested workflows—not built-in analysis features or customer testimonials.
 
 ![The plugin syncs text; your separately configured agent analyzes it](assets/research-workflow-en.svg)
 
 ## 1. Investment research: follow changes and their evidence
 
-Build a daily archive of research commentary, company views, and industry briefings. With sufficient history, compare yesterday, the past 3 / 7 / 30 days, or six months to a year.
+For example, you join a research-sharing library that updates daily, possibly through a paid subscription. With the appropriate access and local-saving permissions, turn supported research commentary, company views, and industry briefings into a growing local collection, rather than only browsing them in IMA. With your own agent and sufficient history, compare yesterday, the past 3 / 7 / 30 days, or six months to a year.
+
+A subscription or viewing permission does not automatically permit saving or redistribution. Follow the sharer's permissions; the plugin is not for unlocking paid content or bypassing restrictions, and local copies do not transfer copyright.
 
 > Compare the past 7 days of robotics research with the preceding 30 days. For each company, identify changes in orders, production timelines, and earnings expectations. Separate new evidence, repeated views, and disagreements. Include dates and sources; flag gaps and do not infer buy or sell recommendations.
 
