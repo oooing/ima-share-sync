@@ -4,27 +4,35 @@
 
 ![Articles others share through IMA become local Obsidian notes for your own research workflow](docs/assets/research-hero-en.svg)
 
-**Shared by others. Saved for your own research.**
+**Turn others’ shared insights into your local research library.**
 
-Save **text articles others share through IMA** as local Markdown in Obsidian—not just your own uploads. Search and annotate them alongside your notes, then analyze them with your own agent.
+Found valuable investment research, industry insights, or a curated collection shared through IMA? Take it beyond online reading.
 
-## Follow companies and industries over time
+IMA Share Sync saves **text articles shared by others through IMA** as local Markdown in Obsidian, including paid shares you have permission to save. Build an archive you can search, annotate, and analyze with an AI agent you configure.
 
-Keep a daily local archive of research shared with you, including paid material where saving is permitted. Use your agent to compare 3 / 7 / 30 days, six months, or a year of company and industry views—and find changes worth investigating.
+## Investment research: follow today’s developments, understand what changed
 
-> “What changed in robotics orders and production expectations over the past 7 days? Compare with the preceding 30 days and cite the sources.”
+Save investment-bank research and industry articles each day, building a traceable research library alongside your own notes.
 
-## More ways to use your reading
+Then use your own agent for on-demand or scheduled analysis. Compare yesterday, the past 3 / 7 / 30 days, six months, or a year to see how views, expectations, and evidence about a company or sector have evolved—and identify leads worth investigating.
 
-**Track competitors.** Collect product updates and compare pricing, features, and positioning.
+> “How have humanoid robot orders and production expectations changed over the past 7 days? Compared with the preceding 30 days, what is genuinely new and what repeats earlier views? Cite the original sources.”
 
-**Write with evidence.** Collect material, then draw on examples, contrasting views, and sources.
+Don’t just finish today’s reading. Let each day’s material inform your next research question.
+
+## More ways to use your archive
+
+**Track competitors.** Collect product updates and industry analysis. Compare changes in features, pricing, and positioning to inform product decisions.
+
+**Write with evidence.** Build a topic-based collection, then ask your agent to organize examples, compare perspectives, and retrieve original sources when you write.
 
 [Explore use cases and example prompts →](docs/USE-CASES.md)
 
 *The plugin syncs text; agents and automated analysis require separate setup. Comparisons depend on available history. No live market feed or investment advice.*
 
-## Quick start
+## From shared reading to your own workflow
+
+Choose an IMA source and an Obsidian destination to start syncing. Local Markdown files are easy to back up, move, and use with tools that can read your local archive.
 
 Windows 10+ · Obsidian 1.11.4+ · Signed-in IMA desktop with access to the shared content · No other plugins needed.
 
