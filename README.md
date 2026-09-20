@@ -6,40 +6,37 @@
 
 **Shared by others. Saved for your own research.**
 
-This is about **articles other people share with you through IMA**, not just content you uploaded yourself. Save shared text you have permission to keep as local Markdown in Obsidian. Annotate and search it alongside your own notes, then analyze it with an agent that can read your local files.
+Save **text articles others share through IMA** as local Markdown in Obsidian—not just your own uploads. Search and annotate them alongside your notes, then analyze them with your own agent.
 
 ## Follow companies and industries over time
 
-For example, you join a shared research library that updates daily—perhaps through a paid subscription. Where your access and local-saving permissions allow it, keep supported research articles and briefings in your own vault rather than only reading them one by one in IMA.
+Keep a daily local archive of research shared with you, including paid material where saving is permitted. Use your agent to compare 3 / 7 / 30 days, six months, or a year of company and industry views—and find changes worth investigating.
 
-With a separately configured agent, compare yesterday, the past 3 / 7 / 30 days, or six months to a year: what changed, what stayed the same, and which ideas need closer investigation?
-
-> “Compare the past 7 days of robotics research with the previous 30 days. What changed in orders, production timelines, and earnings expectations? Separate new evidence from repeated views, and link to the sources.”
+> “What changed in robotics orders and production expectations over the past 7 days? Compare with the preceding 30 days and cite the sources.”
 
 ## More ways to use your reading
 
-**Track competitors.** Save product updates and industry commentary; ask your agent what changed in pricing, features, and positioning—and how that relates to your roadmap.
+**Track competitors.** Collect product updates and compare pricing, features, and positioning.
 
-**Write with evidence.** Build a library of articles, examples, and viewpoints; ask your agent for an outline with contrasting perspectives and traceable sources, then make it your own.
+**Write with evidence.** Collect material, then draw on examples, contrasting views, and sources.
 
 [Explore use cases and example prompts →](docs/USE-CASES.md)
 
-*These are suggested workflows, not built-in AI features. The plugin saves text; you configure analysis and scheduled or file-triggered runs separately. Historical comparisons need sufficient source history. No live market feed or investment recommendations are provided.*
+*The plugin syncs text; agents and automated analysis require separate setup. Comparisons depend on available history. No live market feed or investment advice.*
 
 ## Quick start
 
-Requires Windows 10+, Obsidian 1.11.4+, and a signed-in IMA desktop app with access to your source folder. No other plugins needed.
+Windows 10+ · Obsidian 1.11.4+ · Signed-in IMA desktop with access to the shared content · No other plugins needed.
 
-[Install the latest release](https://github.com/oooing/ima-share-sync/releases/latest) using the [setup guide](docs/GUIDE.md). Choose your IMA knowledge base, source folder, and Obsidian destination, then sync. Optional startup sync is available in settings. The plugin interface currently uses Chinese.
+[Install the latest release](https://github.com/oooing/ima-share-sync/releases/latest) with the [setup guide](docs/GUIDE.md). Choose your source and destination, then sync. Startup sync is optional; the plugin UI currently uses Chinese.
 
 ## Before you sync
 
-- Recognized saved articles are skipped by default. Check results in the sidebar sync logs.
-- Local desktop automation may open IMA windows. You can stop it anytime; this is not a headless service.
-- For text articles; PDFs, images, and attachments are not fully supported.
-- Only sync content you may access and save. This is not a paid-content unlocker or a way to bypass restrictions; viewing access alone does not grant permission to save or redistribute. A local copy does not transfer copyright.
+- Recognized saved articles are skipped by default; results are logged.
+- Desktop automation may open IMA; you can stop it. PDFs, images, and attachments are not fully supported.
+- Save only with permission. No paid-content unlocking or bypassing restrictions; local copies do not grant copyright or redistribution rights.
 
-Local files give you control over storage and which tools can read them. Cloud agents or vault-sync services may still upload the content you share with them. The plugin uses no telemetry or custom upload servers; IMA itself requires internet.
+No telemetry or custom upload servers. IMA needs internet; cloud agents or vault-sync services may upload content you authorize.
 
 Licensed under [MIT](LICENSE). Independent project, not affiliated with Tencent, IMA, or Obsidian.
 
