@@ -2,158 +2,158 @@
 
 <h1>IMA Share Sync</h1>
 
-<p><strong>简体中文</strong> · <a href="README.en.md">English</a></p>
+<p><strong>English</strong> · <a href="README.zh-CN.md">简体中文</a></p>
 
-<p><strong>随时回看</strong></p>
+<p><strong>Keep it handy</strong></p>
 
-<p>把别人通过 IMA 分享的文章和文件，存到电脑上的 Obsidian。<br>想看就查，写作就用。</p>
+<p>Save articles and files shared through IMA as notes and files in Obsidian.<br>Find them when you need them. Use them when you write.</p>
 
-<p><a href="https://obsidian.md/plugins?id=ima-speed-sync"><strong>社区页面 →</strong></a></p>
+<p><a href="https://obsidian.md/plugins?id=ima-speed-sync"><strong>Community listing →</strong></a></p>
 
-<p><a href="https://github.com/oooing/ima-share-sync/blob/main/docs/GUIDE.zh-CN.md">手动安装</a> · <a href="https://github.com/oooing/ima-share-sync/releases/tag/0.2.0">下载文件</a></p>
+<p><a href="https://github.com/oooing/ima-share-sync/blob/main/docs/GUIDE.md">Manual setup</a> · <a href="https://github.com/oooing/ima-share-sync/releases/tag/0.2.0">Download files</a></p>
 
-<p><sub>Windows 10+ · Obsidian 1.11.4+ · 已安装并登录 IMA 电脑版</sub></p>
+<p><sub>Windows 10+ · Obsidian 1.11.4+ · Installed and signed-in IMA desktop</sub></p>
 
-<p>0.2.0 已发布。社区安装尚未开放，请先按指南手动安装。</p>
+<p>Version 0.2.0 is released. Community installation is not yet available; follow the guide to install manually.</p>
 
-<p><a href="#适合谁用">适合谁用</a> · <a href="#能做什么">能做什么</a></p>
+<p><a href="#who-it-helps">Who it helps</a> · <a href="#what-it-does">What it does</a></p>
 
 </div>
 
 ---
 
-## 适合谁用
+## Who it helps
 
-学习、工作、写作，把要用的资料留在自己的电脑里。
+Keep useful material on your computer for learning, work, and writing.
 
-<p align="center"><img src="docs/assets/ima-share-sync-overview-zh-CN-landscape-v3.png" alt="别人分享资料，保存到电脑，再用来学习、工作和写作。" width="960"></p>
+<p align="center"><img src="docs/assets/ima-share-sync-overview-en-landscape-rounded-v4.svg" alt="Save shared material to your computer, then use it for learning, work, and writing." width="960"></p>
 
-> 资料由插件保存。AI 整理和分析需另行设置工具。
-
----
-
-<p align="center"><img src="docs/assets/scenarios/research-zh-CN-sc011-rounded-v2.svg" alt="行业研究：行业研报、公司分析、行业访谈、原文依据。" width="420"></p>
-
-### 行业研究
-
-**适合谁**：研究行业、分析公司、长期跟踪变化的人。
-
-**举个例子**：保存研报、公司分析和访谈，比较不同观点时，随手查回原文。
+> The plugin saves material. AI tools for organizing or analyzing it need separate setup.
 
 ---
 
-<p align="center"><img src="docs/assets/scenarios/learning-zh-CN-sc011-rounded-v2.svg" alt="学习备考：课程讲义、学习文章、复习笔记、知识要点。" width="420"></p>
+<p align="center"><img src="docs/assets/scenarios/research-en-sc011-rounded-v2.svg" alt="Follow an industry: Reports, Company notes, Interviews, Evidence." width="420"></p>
 
-### 学习备考
+### Industry research
 
-**适合谁**：学生、备考者、正在学新技能的人。
+**For**: People studying industries, companies, and changes over time.
 
-**举个例子**：把讲义和学习文章放在一起，复习时少翻几个地方。
-
----
-
-<p align="center"><img src="docs/assets/scenarios/work-zh-CN-sc011-rounded-v2.svg" alt="工作参考：项目案例、工作指南、方案参考、汇报素材。" width="420"></p>
-
-### 工作参考
-
-**适合谁**：刚入职、带项目、常写方案的人。
-
-**举个例子**：保存同事分享的案例和指南，下次写方案、做汇报时直接找来参考。
+**For example**: Save reports, company analyses, and interviews. Compare viewpoints and check the original source.
 
 ---
 
-<p align="center"><img src="docs/assets/scenarios/writing-zh-CN-sc011-rounded-v2.svg" alt="内容创作：好文章、人物故事、行业案例、原文出处。" width="420"></p>
+<p align="center"><img src="docs/assets/scenarios/learning-en-sc011-rounded-v2.svg" alt="Study and learn: Course notes, Articles, Study notes, Key ideas." width="420"></p>
 
-### 内容创作
+### Study and learn
 
-**适合谁**：写文章、做编辑、分享知识的人。
+**For**: Students, exam candidates, and anyone learning a new skill.
 
-**举个例子**：留下好文章和人物故事，写作时有素材，引用时找得到出处。
-
----
-
-<p align="center"><img src="docs/assets/scenarios/product-zh-CN-sc011-rounded-v2.svg" alt="产品调研：产品介绍、用户反馈、设计案例、功能定价。" width="420"></p>
-
-### 产品调研
-
-**适合谁**：做产品、做设计、开发软件的人。
-
-**举个例子**：把产品介绍、用户反馈和设计案例放在一起，方便比较功能和价格。
+**For example**: Keep handouts and learning articles together, with fewer places to search when you study.
 
 ---
 
-<p align="center"><img src="docs/assets/scenarios/hobby-zh-CN-sc011-rounded-v2.svg" alt="兴趣收藏：教程攻略、摄影构图、养花经验、日常菜谱。" width="420"></p>
+<p align="center"><img src="docs/assets/scenarios/work-en-sc011-rounded-v2.svg" alt="Keep work references: Project cases, Work guides, Proposal notes, Report notes." width="420"></p>
 
-### 兴趣收藏
+### Work references
 
-**适合谁**：喜欢摄影、养花、做饭的人。
+**For**: New hires, project leads, and anyone writing proposals.
 
-**举个例子**：存好摄影教程、养花心得和菜谱，练习时边看边做，再记下自己的体会。
+**For example**: Save examples and guides from colleagues. Find them again for your next proposal or presentation.
 
 ---
 
-## 能做什么
+<p align="center"><img src="docs/assets/scenarios/writing-en-sc011-rounded-v2.svg" alt="Prepare to write: Articles, Stories, Case studies, Sources." width="420"></p>
 
-展开一组，看看能做什么。
+### Writing material
+
+**For**: Writers, editors, and people who share what they know.
+
+**For example**: Keep articles and personal stories for your next piece. Find the source when you need to cite it.
+
+---
+
+<p align="center"><img src="docs/assets/scenarios/product-en-sc011-rounded-v2.svg" alt="Research products: Product notes, User feedback, Design cases, Features & prices." width="420"></p>
+
+### Product research
+
+**For**: People who build products, design, or develop software.
+
+**For example**: Keep product details, user feedback, and design examples together to compare features and prices.
+
+---
+
+<p align="center"><img src="docs/assets/scenarios/hobby-en-sc011-rounded-v2.svg" alt="Collect hobby tips: How-to guides, Composition, Plant care, Recipes." width="420"></p>
+
+### Hobby tips
+
+**For**: People who enjoy photography, gardening, or cooking.
+
+**For example**: Keep tutorials, plant care tips, and recipes handy as you practice. Add what you learn along the way.
+
+---
+
+## What it does
+
+Open a group to see what you can do.
 
 <details>
-<summary><strong>保存资料</strong> · 4 项</summary>
+<summary><strong>Save material</strong> · 4 features</summary>
 
-**保存文章**  
-把允许保存的 IMA 文章存成笔记，查找、标注时和其他笔记放在一起。
+**Save articles**  
+Save IMA articles you are allowed to keep as Obsidian notes. Search, annotate, and read them alongside your other notes.
 
-**保存原件**  
-从 IMA 提供的下载入口，保存 PDF、图片及支持下载的音视频原件。
+**Keep originals**  
+Keep PDFs, images, and supported audio or video originals using the downloads available in IMA.
 
-**挑选资料**  
-可先查看最近 1–30 份资料，也可扩大范围、按标题挑选；每批保存有数量上限。
+**Choose material**  
+Start with 1–30 recent items, widen the search, or filter by title. Each batch has a saving limit.
 
-**保留分组**  
-按原来的文件夹名称存放资料；可包含子文件夹，并限制查找层数和文件夹数量。
+**Keep folders**  
+Keep the original folder names. Include subfolders and limit how many folders and levels to search.
 
 </details>
 
 <details>
-<summary><strong>整理笔记</strong> · 5 项</summary>
+<summary><strong>Organize notes</strong> · 5 features</summary>
 
-**转成笔记**  
-把 PDF 中已有的文字转成笔记，可附原件链接；扫描版只生成提示，不识别图片里的字。
+**Make notes**  
+Turn existing PDF text into notes, with optional links to the original. Scans get a notice; text inside images is not read.
 
-**补齐笔记**  
-给已存好的 PDF 补上缺少的笔记，不用重新下载。
+**Fill missing notes**  
+Add missing notes for PDFs you have already saved, without downloading the files again.
 
-**跳过重复**  
-默认跳过识别为已保存的文章，少存重复内容。
+**Skip saved articles**  
+Articles recognized as already saved are skipped by default, reducing duplicate copies.
 
-**保护笔记**  
-默认不替换同名文件；把 PDF 转成笔记时，会保留其他方式创建的笔记。
+**Protect notes**  
+Files with the same name are not replaced by default. Turning PDFs into notes also preserves notes made outside this plugin.
 
-**检查文件**  
-检查 PDF 是否可用，遇到损坏或限制读取的文件，会提示原因。
+**Check files**  
+Check whether a PDF can be read. If it is damaged or access is restricted, see the reason.
 
 </details>
 
 <details>
-<summary><strong>日常使用</strong> · 4 项</summary>
+<summary><strong>Everyday controls</strong> · 4 features</summary>
 
-**控制保存**  
-可手动开始，也可随 Obsidian 启动自动保存；自动开始前可推迟或取消，保存中可停止。
+**Control saving**  
+Start manually or save when Obsidian opens. Delay or cancel an automatic start, or stop a save already in progress.
 
-**查看记录**  
-查看每次保存了哪些文章、是否成功；遇到问题，找到对应记录再检查。
+**Review results**  
+See which articles were saved and whether each save worked. Find the matching record if something goes wrong.
 
-**查看进度**  
-查看保存进度，按需开启结果提醒、图标上的提示或电脑通知。
+**See progress**  
+Follow saving progress. Choose result reminders, notices on icons, or desktop notifications.
 
-**切换语言**  
-设置页可选中文、英文，或跟随 Obsidian 的语言；部分侧栏和提示仍为中文。
+**Choose language**  
+Use Chinese or English for settings, or follow Obsidian's language. Some sidebar text and messages are still in Chinese.
 
 </details>
 
 ---
 
-### 开始收藏
+### Start collecting
 
-把下一份好资料，留在自己的电脑里。
+Keep your next good find on your own computer.
 
-**[社区页面 →](https://obsidian.md/plugins?id=ima-speed-sync)** · [手动安装](https://github.com/oooing/ima-share-sync/blob/main/docs/GUIDE.zh-CN.md)
+**[Community listing →](https://obsidian.md/plugins?id=ima-speed-sync)** · [Manual setup](https://github.com/oooing/ima-share-sync/blob/main/docs/GUIDE.md)
