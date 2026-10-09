@@ -375,6 +375,7 @@ Module._load = function (request, parent, isMain) {
       WorkspaceLeaf: class {},
       normalizePath,
       addIcon(id, svg) { registeredIcons.set(id, svg); },
+      getLanguage() { return "zh"; }, // Keep deterministic UI expectations independent of the runner locale.
       setIcon(element, icon) { element.icon = icon; },
     };
   }
