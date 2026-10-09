@@ -1,6 +1,6 @@
 # IMA Share Sync
 
-[English](README.md) · **简体中文**
+**简体中文** · [English](README.en.md)
 
 ## 资料留得住
 

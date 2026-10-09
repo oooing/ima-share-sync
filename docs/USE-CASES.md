@@ -1,6 +1,6 @@
 # Ways to use saved material
 
-[Back to the overview](../README.md) · [简体中文](USE-CASES.zh-CN.md)
+[Back to the overview](../README.en.md) · [简体中文](USE-CASES.zh-CN.md)
 
 Keep valuable reports, industry material, and articles others share through IMA, where you have permission to save them.
 
