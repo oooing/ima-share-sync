@@ -24,11 +24,13 @@ Windows 10 及以上 · Obsidian 1.11.4 及以上 · 已安装并登录 IMA 桌�
   <tr>
     <td width="50%" valign="top">
       <h3>学习备考</h3>
+      <p align="center"><img src="docs/assets/scenarios/learning-zh-CN-sc011-v1.jpg" alt="学习备考：课程讲义、学习文章、复习笔记、知识要点。" width="360"></p>
       <p><strong>适合谁</strong>：学生、备考者、正在学新技能的人。</p>
       <p><strong>举个例子</strong>：保存别人分享的课程讲义和学习文章，复习时集中查找，再用本地 AI 整理知识要点。</p>
     </td>
     <td width="50%" valign="top">
       <h3>工作参考</h3>
+      <p align="center"><img src="docs/assets/scenarios/work-zh-CN-sc011-v1.jpg" alt="工作参考：项目案例、工作指南、方案参考、汇报素材。" width="360"></p>
       <p><strong>适合谁</strong>：职场新人、项目负责人、常写方案的人。</p>
       <p><strong>举个例子</strong>：保存同事分享的项目案例和工作指南，下次写方案、做汇报时，快速找到参考。</p>
     </td>
@@ -36,11 +38,13 @@ Windows 10 及以上 · Obsidian 1.11.4 及以上 · 已安装并登录 IMA 桌�
   <tr>
     <td width="50%" valign="top">
       <h3>内容创作</h3>
+      <p align="center"><img src="docs/assets/scenarios/writing-zh-CN-sc011-v1.jpg" alt="内容创作：好文章、人物故事、行业案例、原文出处。" width="360"></p>
       <p><strong>适合谁</strong>：自媒体作者、内容编辑、知识分享者。</p>
       <p><strong>举个例子</strong>：保存好文章、人物故事和行业案例，写作时回查出处，也可让本地 AI 整理素材、拟定提纲。</p>
     </td>
     <td width="50%" valign="top">
       <h3>产品调研</h3>
+      <p align="center"><img src="docs/assets/scenarios/product-zh-CN-sc011-v1.jpg" alt="产品调研：产品介绍、用户反馈、设计案例、功能定价。" width="360"></p>
       <p><strong>适合谁</strong>：产品经理、设计师、独立开发者。</p>
       <p><strong>举个例子</strong>：保存同类产品介绍、用户反馈和设计案例，规划下一次更新时，比较功能、价格与做法。</p>
     </td>
@@ -48,11 +52,13 @@ Windows 10 及以上 · Obsidian 1.11.4 及以上 · 已安装并登录 IMA 桌�
   <tr>
     <td width="50%" valign="top">
       <h3>行业研究</h3>
+      <p align="center"><img src="docs/assets/scenarios/research-zh-CN-sc011-v1.jpg" alt="行业研究：行业研报、公司分析、行业访谈、原文依据。" width="360"></p>
       <p><strong>适合谁</strong>：行业研究者、投研从业者、长期观察者。</p>
       <p><strong>举个例子</strong>：保存别人分享的研报、公司分析和行业访谈，再让本地 AI 比较不同观点，回查原文依据。</p>
     </td>
     <td width="50%" valign="top">
       <h3>兴趣收藏</h3>
+      <p align="center"><img src="docs/assets/scenarios/hobby-zh-CN-sc011-v1.jpg" alt="兴趣收藏：教程攻略、摄影构图、养花经验、日常菜谱。" width="360"></p>
       <p><strong>适合谁</strong>：摄影、园艺、烹饪等爱好者。</p>
       <p><strong>举个例子</strong>：保存别人分享的构图教程、养花经验或菜谱，练习时随手翻看，也能加上自己的心得。</p>
     </td>
