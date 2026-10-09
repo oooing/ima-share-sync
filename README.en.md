@@ -2,7 +2,7 @@
 
 <h1>IMA Share Sync</h1>
 
-<p><a href="README.md">简体中文</a> · <strong>English</strong></p>
+<p><strong>English</strong> · <a href="README.zh-CN.md">简体中文</a></p>
 
 <p><strong>Keep it handy</strong></p>
 
@@ -26,7 +26,7 @@
 
 Keep useful material on your computer for learning, work, and writing.
 
-<p align="center"><img src="docs/assets/ima-share-sync-overview-en-landscape-v3.png" alt="Save shared material to your computer, then use it for learning, work, and writing." width="960"></p>
+<p align="center"><img src="docs/assets/ima-share-sync-overview-en-landscape-rounded-v4.svg" alt="Save shared material to your computer, then use it for learning, work, and writing." width="960"></p>
 
 > The plugin saves material. AI tools for organizing or analyzing it need separate setup.
 
