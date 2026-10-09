@@ -2,7 +2,7 @@
 
 <h1>IMA Share Sync</h1>
 
-<p><strong>简体中文</strong> · <a href="README.en.md">English</a></p>
+<p><strong>简体中文</strong> · <a href="README.md">English</a></p>
 
 <p><strong>随时回看</strong></p>
 
@@ -26,7 +26,7 @@
 
 学习、工作、写作，把要用的资料留在自己的电脑里。
 
-<p align="center"><img src="docs/assets/ima-share-sync-overview-zh-CN-landscape-v3.png" alt="别人分享资料，保存到电脑，再用来学习、工作和写作。" width="960"></p>
+<p align="center"><img src="docs/assets/ima-share-sync-overview-zh-CN-landscape-rounded-v4.svg" alt="别人分享资料，保存到电脑，再用来学习、工作和写作。" width="960"></p>
 
 > 资料由插件保存。AI 整理和分析需另行设置工具。
 
