@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="224" height="54" viewBox="0 0 224 54" role="img" aria-labelledby="title desc">
+<title id="title">Install plugin</title>
+<desc id="desc">Open the official Obsidian plugin page to install IMA Share Sync.</desc>
+<defs><linearGradient id="fill" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#875CF5"/><stop offset="1" stop-color="#6540CB"/></linearGradient></defs>
+<rect x="1" y="1" width="222" height="52" rx="13" fill="url(#fill)" stroke="#A38AE4"/>
+<g fill="none" stroke="#FFFFFF" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M33 17v15m-5-5 5 5 5-5M25 33v6h16v-6"/></g>
+<text x="125" y="34" text-anchor="middle" fill="#FFFFFF" font-family="Segoe UI,Microsoft YaHei,Arial,sans-serif" font-size="19" font-weight="600">Install plugin</text>
+</svg>

@@ -1,58 +1,54 @@
-# Put your reading to work
+# Ways to use saved material
 
-[← Back to the overview](../README.md) · [简体中文](USE-CASES.zh-CN.md)
+[Back to the overview](../README.md) · [简体中文](USE-CASES.zh-CN.md)
 
-Start with **text articles other people share with you through IMA**, not just your own uploads. Where you have permission to access and save them, keep local Markdown copies in Obsidian that you can organize, search, and use with an agent that reads local files. These are suggested workflows—not built-in analysis features or customer testimonials.
+Keep valuable reports, industry material, and articles others share through IMA, where you have permission to save them.
 
-![The plugin syncs text; your separately configured agent analyzes it](assets/research-workflow-en.svg)
+Organize them in Obsidian yourself, or separately configure a local AI tool that can read the saved files.
 
-## 1. Investment research: follow changes and their evidence
+These are suggested uses. AI analysis requires your own tools and human source checks.
 
-For example, you join a research-sharing library that updates daily, possibly through a paid subscription. With the appropriate access and local-saving permissions, turn supported research commentary, company views, and industry briefings into a growing local collection, rather than only browsing them in IMA. With your own agent and sufficient history, compare yesterday, the past 3 / 7 / 30 days, or six months to a year.
+## Follow research
 
-A subscription or viewing permission does not automatically permit saving or redistribution. Follow the sharer's permissions; the plugin is not for unlocking paid content or bypassing restrictions, and local copies do not transfer copyright.
+Give reports from different dates to a local AI tool you configure, then compare changes in views and evidence.
 
-> Compare the past 7 days of robotics research with the preceding 30 days. For each company, identify changes in orders, production timelines, and earnings expectations. Separate new evidence, repeated views, and disagreements. Include dates and sources; flag gaps and do not infer buy or sell recommendations.
+**Try asking your AI tool**
 
-The intended output: a source-linked change brief for further investigation, not an unsupported investment answer.
+> Compare reports from the past seven days with the preceding month. Which views changed? Include original sources.
 
-## 2. Competitor tracking: relate new moves to your own plans
+## Watch competitors
 
-Collect competitor updates and industry commentary from IMA, alongside the product plans you maintain in Obsidian.
+Keep articles about product and pricing changes so you can compare them later.
 
-> Compare the past 30 days of competitor material with the preceding 30 days. Summarize changes in pricing, features, and target users. Compare these with our roadmap and list directions worth testing. Cite sources and separate facts from inference.
+**Try asking your AI tool**
 
-The intended output: a before-and-after competitor brief that relates to your product.
+> Find recent feature and pricing changes in my saved material. Group them by product and include sources.
 
-## 3. Writing: turn saved material into evidence for your ideas
+## Prepare to write
 
-Keep shared articles, examples, and perspectives locally. When you have a topic, draw on what you have already collected.
+Save articles and examples, find ideas when writing, and return to the original material.
 
-> For an article about how AI is changing independent software development, find three real examples and two contrasting perspectives in my notes. Build an outline with sources. Mark evidence gaps instead of inventing details.
+**Try asking your AI tool**
 
-The intended output: a traceable outline. You still choose the argument, verify the evidence, and write the final piece.
+> Find examples and contrasting views in my saved material. Draft an outline and flag missing evidence.
 
-![Two suggested workflows: competitor change briefs and evidence-based writing outlines](assets/research-scenarios-en.svg)
+## Keep researching
 
-## 4. Topic research: test new material against earlier conclusions
+Build a collection around a question and revisit earlier notes when new material arrives.
 
-Accumulate text explainers and research notes around a question you keep returning to.
+**Try asking your AI tool**
 
-> What does this month's material add to or contradict in my existing conclusions? List supporting and opposing sources by claim, then identify questions that still need investigation.
+> What does this month's material add to or change in my earlier views? List questions to check next.
 
-## 5. User research: compare today's feedback with past findings
+## Before you start
 
-If your team shares authorized interview text or feedback summaries in IMA, compare them with past research after syncing. Redact personal information and follow your team's access rules before giving an agent access.
+- **Check coverage.** Confirm available dates and sources. AI cannot fill gaps in material you have not collected.
+- **Keep originals.** Save analysis to separate notes and retain sources so you can check them later.
+- **Set up tools separately.** Scheduled organization and AI analysis are not built in. Cloud tools may upload the content you authorize.
+- **Save with permission.** Viewing or subscribing does not necessarily permit saving. Local copies do not permit redistribution.
 
-> Compare this month's feedback with the previous quarter. Which problems persist, and which are new? Group by user segment, preserve links to the original quotes, and do not generalize a few comments to all users.
-
-## Set three boundaries first
-
-- **Check coverage.** Ask the agent to confirm the dates and sources available. Publication dates are not sync dates; a full-year comparison requires adequate source history.
-- **Keep sources separate.** Write analysis to separate notes, retain verifiable file paths or source links, and avoid rewriting original material.
-- **Configure automation separately.** Scheduled analysis, file-change triggers, and AI inference are not included in this plugin. Cloud agents may receive the content you authorize them to read; local storage does not mean an entirely offline workflow.
-
-## Public practices that informed these examples
+<details>
+<summary>Public references</summary>
 
 These are first-person or team accounts, not IMA Share Sync testimonials or independently verified productivity results. The prompts above are our suggested adaptations.
 
@@ -62,4 +58,6 @@ These are first-person or team accounts, not IMA Share Sync testimonials or inde
 - [An Obsidian community research-to-publication workflow](https://forum.obsidian.md/t/some-rough-notes-on-end-to-end-process-for-recent-academic-publication/11964) (January 25, 2021): connecting themes, arguments, and sources through linked notes.
 - [Simple Thread's UX research repository](https://www.simplethread.com/building-a-ux-research-brain-atomic-research-zettelkasten-and-obsidian/) (April 6, 2026): linking questions, facts, and recommendations. The team describes an early-stage practice and explicitly hypothetical client examples.
 
-[Installation and sync guide →](GUIDE.md)
+</details>
+
+[Setup guide](GUIDE.md) · [Obsidian plugin page](https://obsidian.md/plugins?id=ima-speed-sync)

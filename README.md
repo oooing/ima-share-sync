@@ -1,61 +1,71 @@
 # IMA Share Sync
 
-**English** · [简体中文](https://github.com/oooing/ima-share-sync/blob/main/README.zh-CN.md)
+**English** · [简体中文](README.zh-CN.md)
 
-![Articles others share through IMA become local Obsidian notes for your own research workflow](docs/assets/research-hero-en.svg)
+## Keep what matters
 
-**Turn others’ shared insights into your local research library.**
+Save valuable reports and articles others share through IMA into Obsidian. Then give them to a local AI tool you configure for analysis.
 
-Found valuable investment research, industry insights, or a curated collection shared through IMA? Take it beyond online reading.
+<p align="center">
+  <a href="https://obsidian.md/plugins?id=ima-speed-sync"><img src="docs/assets/install-obsidian-en.svg" alt="Open the Obsidian plugin page to install" width="224" height="54"></a>
+</p>
 
-IMA Share Sync saves **text articles and permitted original files shared through IMA** into your Obsidian vault, with local PDF-to-Markdown conversion, including paid shares you have permission to save. Build an archive you can search, annotate, and analyze with an AI agent you configure.
+<p align="center"><a href="https://github.com/oooing/ima-share-sync/blob/main/docs/GUIDE.md">Setup guide</a> · <a href="https://github.com/oooing/ima-share-sync/releases/tag/0.2.0">Download files</a></p>
 
-## What is new in 0.2.0
+Windows 10+ · Obsidian 1.11.4+ · Installed and signed-in IMA desktop.
 
-- Sync recent items or choose Sync All, with subfolder depth, title filters, and folder limits.
-- Save permitted original files and validate PDF page structure before importing.
-- Convert PDF text to Markdown locally; keep a link to the original and fill missing notes manually. No OCR.
-- Organize settings into Sync Scope, Convert, Notices, and General, with Chinese / English selection.
-- Keep old per-folder limits until you explicitly migrate to a total-per-run limit.
+![Save valuable shared material, then use your own local AI tools](docs/assets/research-hero-en.svg)
+
+## Put saved material to use
+
+- **Less copying.** Choose an IMA source and an Obsidian destination. Let the plugin save articles for you.
+- **Find it again.** Search and annotate saved notes alongside the notes you already have in Obsidian.
+- **Bring your own AI.** Give saved material to a local AI tool you configure to compare views, spot changes, and check sources.
+
+## New in 0.2.0
+
+- **Keep originals.** Save PDFs, images, and supported audio or video files through IMA's available download routes.
+- **Make notes.** Turn text in PDFs into searchable notes. No separate conversion tool is needed.
+- **Choose what to save.** Pick recent material, or filter by title and folder.
+- **Keep folders.** Include subfolders and use source folder names to keep saved material organized.
+- **Fill missing notes.** Create missing notes from saved PDFs and optionally link back to the originals.
+- **Check PDFs.** Get a reason when damaged or protected PDFs cannot be imported.
+- **Find settings.** Saving, note conversion, reminders, and general options have separate tabs. Choose Chinese or English.
+- **Keep your limits.** Existing item-count rules stay in place until you choose to change them.
 
 [Release notes](https://github.com/oooing/ima-share-sync/releases/tag/0.2.0) · [Selection rules](docs/general-selection.md)
 
-## Investment research: follow today’s developments, understand what changed
+## Ways to use it
 
-Save investment-bank research and industry articles each day, building a traceable research library alongside your own notes.
+- **Follow research.** Give reports from different dates to a local AI tool you configure, then compare changes in views and evidence.
+- **Watch competitors.** Keep articles about product and pricing changes so you can compare them later.
+- **Prepare to write.** Save articles and examples, find ideas when writing, and return to the original material.
+- **Keep researching.** Build a collection around a question and revisit earlier notes when new material arrives.
 
-Then use your own agent for on-demand or scheduled analysis. Compare yesterday, the past 3 / 7 / 30 days, six months, or a year to see how views, expectations, and evidence about a company or sector have evolved—and identify leads worth investigating.
+[More ideas](docs/USE-CASES.md)
 
-> “How have humanoid robot orders and production expectations changed over the past 7 days? Compared with the preceding 30 days, what is genuinely new and what repeats earlier views? Cite the original sources.”
+## Start saving
 
-Don’t just finish today’s reading. Let each day’s material inform your next research question.
+1. Install from the button above and follow the setup guide.
+2. Choose the shared IMA source and the Obsidian folder where material should go.
+3. Start saving. To analyze it with AI, separately configure a local tool that can read those files.
 
-## More ways to use your archive
+## Before you start
 
-**Track competitors.** Collect product updates and industry analysis. Compare changes in features, pricing, and positioning to inform product decisions.
+- **Scanned PDFs.** Image-only PDFs get a note linking to the original. Text inside images is not recognized.
+- **Complex layouts.** Tables and layouts may differ from the original. Check the source when quoting.
+- **Saving limits.** Bulk saving still has folder and item limits; it does not promise to save everything in one run.
+- **Permission.** Save only material you are allowed to copy or download. Original files need an available IMA download route.
+- **Your own AI.** AI tools need separate setup. The plugin itself does not generate analysis.
+- **Languages.** Settings support Chinese and English. Some sidebar and runtime messages remain in Chinese.
+- **Saved items.** Recognized saved articles are skipped by default. Results are recorded.
+- **Stop when needed.** Saving may open IMA. You can stop the process.
+- **Copyright.** Saving a local copy does not permit redistribution. The plugin does not unlock paid content or bypass restrictions.
 
-**Write with evidence.** Build a topic-based collection, then ask your agent to organize examples, compare perspectives, and retrieve original sources when you write.
+## Privacy
 
-[Explore use cases and example prompts →](docs/USE-CASES.md)
-
-*The plugin syncs text; agents and automated analysis require separate setup. Comparisons depend on available history. No live market feed or investment advice.*
-
-## From shared reading to your own workflow
-
-Choose an IMA source and an Obsidian destination to start syncing. Local Markdown files are easy to back up, move, and use with tools that can read your local archive.
-
-Windows 10+ · Obsidian 1.11.4+ · Signed-in IMA desktop with access to the shared content · No other plugins needed.
-
-[Install the latest release](https://github.com/oooing/ima-share-sync/releases/latest) with the [setup guide](docs/GUIDE.md). Choose your source and destination, then sync. Startup sync is optional; the settings support Chinese and English.
-
-## Before you sync
-
-- Recognized saved articles are skipped by default; results are logged.
-- Desktop automation may open IMA; you can stop it. Original files require an available IMA download route. Scanned PDFs get a linked placeholder; OCR is not included.
-- Save only with permission. No paid-content unlocking or bypassing restrictions; local copies do not grant copyright or redistribution rights.
-
-No telemetry or custom upload servers. IMA needs internet; cloud agents or vault-sync services may upload content you authorize.
+No usage-data collection or custom upload servers. IMA needs internet; the AI tools or note-sync services you configure may upload content you authorize.
 
 Licensed under [MIT](LICENSE). Independent project, not affiliated with Tencent, IMA, or Obsidian.
 
-[Full guide](docs/GUIDE.md) · [Technical details](docs/TECHNICAL.md) · [Privacy & security](SECURITY.md) · [Feedback](https://github.com/oooing/ima-share-sync/issues)
+[Full guide](docs/GUIDE.md) · [Technical details](docs/TECHNICAL.md) · [Privacy details](SECURITY.md) · [Feedback](https://github.com/oooing/ima-share-sync/issues)
