@@ -4,139 +4,154 @@
 
 <p><a href="README.md">简体中文</a> · <strong>English</strong></p>
 
-<p><strong>Good finds are worth keeping.</strong></p>
+<p><strong>Keep it handy</strong></p>
 
-<p>Save articles, tutorials, and files others share through IMA into Obsidian. Revisit them, use them as writing references, or give them to your own local AI tool.</p>
+<p>Save articles and files shared through IMA as notes and files in Obsidian.<br>Find them when you need them. Use them when you write.</p>
 
-<p><a href="https://obsidian.md/plugins?id=ima-speed-sync"><img src="docs/assets/install-obsidian-en.svg" alt="Open the Obsidian plugin page to install" width="224" height="54"></a></p>
+<p><a href="https://obsidian.md/plugins?id=ima-speed-sync"><strong>Install the plugin →</strong></a></p>
 
 <p><a href="https://github.com/oooing/ima-share-sync/blob/main/docs/GUIDE.md">Setup guide</a> · <a href="https://github.com/oooing/ima-share-sync/releases/tag/0.2.0">Download files</a></p>
 
-<p><sub>Windows 10+ · Obsidian 1.11.4+ · Installed and signed-in IMA desktop.</sub></p>
+<p><sub>Windows 10+ · Obsidian 1.11.4+ · Installed and signed-in IMA desktop</sub></p>
 
-<p><a href="#who-it-is-for">Use cases</a> · <a href="#available-features">All features</a></p>
+<p><a href="#who-it-helps">Who it helps</a> · <a href="#what-it-does">What it does</a></p>
 
 </div>
 
 ---
 
-## Who it is for
+## Who it helps
 
-[Study and learn](#study-and-learn) · [Keep work references](#keep-work-references) · [Prepare to write](#prepare-to-write) · [Research products](#research-products) · [Follow an industry](#follow-an-industry) · [Collect hobby tips](#collect-hobby-tips)
+Keep useful material on your computer for learning, work, and writing.
 
-<details>
-<summary>See the overview</summary>
+<p align="center"><img src="docs/assets/ima-share-sync-overview-en-landscape-v3.png" alt="Save shared material to your computer, then use it for learning, work, and writing." width="960"></p>
 
-<p align="center"><img src="docs/assets/ima-share-sync-pyramid-en-rounded-v2.svg" alt="Three tiers: shared material, saved locally in Obsidian, and reuse. For students, professionals, creators, product builders, researchers, and hobbyists." width="480"></p>
-
-</details>
-
-### Study and learn
-
-**For**: Students, exam candidates, and anyone learning a skill.
-
-<p align="center"><img src="docs/assets/scenarios/learning-en-sc011-rounded-v2.svg" alt="Study and learn: Course notes, Articles, Study notes, Key ideas." width="480"></p>
-
-**For example**: Keep shared course handouts and learning articles together. Revisit them while studying, or ask your own local AI to outline the key ideas.
-
-<br>
-
-### Keep work references
-
-**For**: New hires, project leads, and people who write proposals.
-
-<p align="center"><img src="docs/assets/scenarios/work-en-sc011-rounded-v2.svg" alt="Keep work references: Project cases, Work guides, Proposal notes, Report notes." width="480"></p>
-
-**For example**: Save project examples and work guides shared by colleagues. Find the references again when preparing your next proposal or presentation.
-
-<br>
-
-### Prepare to write
-
-**For**: Writers, editors, and people who share what they learn.
-
-<p align="center"><img src="docs/assets/scenarios/writing-en-sc011-rounded-v2.svg" alt="Prepare to write: Articles, Stories, Case studies, Sources." width="480"></p>
-
-**For example**: Keep articles, personal stories, and industry examples. Check sources as you write, or ask your own local AI to organize material into an outline.
-
-<br>
-
-### Research products
-
-**For**: Product managers, designers, and independent developers.
-
-<p align="center"><img src="docs/assets/scenarios/product-en-sc011-rounded-v2.svg" alt="Research products: Product notes, User feedback, Design cases, Features & prices." width="480"></p>
-
-**For example**: Save product overviews, user feedback, and design examples. Compare features, prices, and approaches when planning your next update.
-
-<br>
-
-### Follow an industry
-
-**For**: Industry researchers, investment analysts, and long-term observers.
-
-<p align="center"><img src="docs/assets/scenarios/research-en-sc011-rounded-v2.svg" alt="Follow an industry: Reports, Company notes, Interviews, Evidence." width="480"></p>
-
-**For example**: Keep shared reports, company analyses, and industry interviews. Ask your own local AI to compare viewpoints, then check the original evidence.
-
-<br>
-
-### Collect hobby tips
-
-**For**: People who enjoy photography, gardening, cooking, and other hobbies.
-
-<p align="center"><img src="docs/assets/scenarios/hobby-en-sc011-rounded-v2.svg" alt="Collect hobby tips: How-to guides, Composition, Plant care, Recipes." width="480"></p>
-
-**For example**: Keep composition tutorials, gardening advice, or recipes. Revisit them while practicing, and add your own observations in Obsidian.
-
-*The plugin saves material. AI organization and analysis need tools you configure separately.*
+> The plugin saves material. AI tools for organizing or analyzing it need separate setup.
 
 ---
 
-## Available features
+<p align="center"><img src="docs/assets/scenarios/research-en-sc011-rounded-v2.svg" alt="Follow an industry: Reports, Company notes, Interviews, Evidence." width="420"></p>
 
-### Save material
+### Industry research
 
-<p><img src="docs/assets/icons/article-v1.svg" width="24" height="24" alt=""> <strong>Save articles</strong><br>
-Save IMA articles you are allowed to keep as Obsidian notes to search, annotate, and read alongside existing notes.</p>
+**For**: People studying industries, companies, and changes over time.
 
-<p><img src="docs/assets/icons/original-v1.svg" width="24" height="24" alt=""> <strong>Keep originals</strong><br>
-Save PDFs, images, and supported audio or video files through IMA's available download routes.</p>
+**For example**: Save reports, company analyses, and interviews. Compare viewpoints and check the original source.
 
-<p><img src="docs/assets/icons/choose-v1.svg" width="24" height="24" alt=""> <strong>Choose material</strong><br>
-Check 1–30 recent items or widen the scope. Filter by title; bulk saving still has item limits.</p>
+---
 
-<p><img src="docs/assets/icons/folders-v1.svg" width="24" height="24" alt=""> <strong>Keep folders</strong><br>
-Include subfolders, set search depth and folder counts, and organize saved files using source folder names.</p>
+<p align="center"><img src="docs/assets/scenarios/learning-en-sc011-rounded-v2.svg" alt="Study and learn: Course notes, Articles, Study notes, Key ideas." width="420"></p>
 
-### Organize notes
+### Study and learn
 
-<p><img src="docs/assets/icons/make-notes-v1.svg" width="24" height="24" alt=""> <strong>Make notes</strong><br>
-Extract existing PDF text into notes, with optional links to originals. Image-only scans get placeholder notes.</p>
+**For**: Students, exam candidates, and anyone learning a new skill.
 
-<p><img src="docs/assets/icons/fill-notes-v1.svg" width="24" height="24" alt=""> <strong>Fill missing notes</strong><br>
-Create missing notes from saved PDFs without downloading the originals again.</p>
+**For example**: Keep handouts and learning articles together, with fewer places to search when you study.
 
-<p><img src="docs/assets/icons/skip-v1.svg" width="24" height="24" alt=""> <strong>Skip saved articles</strong><br>
-Recognized saved articles are skipped by default to reduce duplicate saving.</p>
+---
 
-<p><img src="docs/assets/icons/protect-v1.svg" width="24" height="24" alt=""> <strong>Protect notes</strong><br>
-Same-name files are not overwritten by default. PDF conversion protects notes created outside this plugin.</p>
+<p align="center"><img src="docs/assets/scenarios/work-en-sc011-rounded-v2.svg" alt="Keep work references: Project cases, Work guides, Proposal notes, Report notes." width="420"></p>
 
-<p><img src="docs/assets/icons/check-v1.svg" width="24" height="24" alt=""> <strong>Check PDFs</strong><br>
-Check PDFs before import and show a reason when a file is damaged or protected.</p>
+### Work references
 
-### Stay in control
+**For**: New hires, project leads, and anyone writing proposals.
 
-<p><img src="docs/assets/icons/control-v1.svg" width="24" height="24" alt=""> <strong>Control saving</strong><br>
-Start manually or enable startup saving. Defer or cancel before automatic saving begins, and stop a running save.</p>
+**For example**: Save examples and guides from colleagues. Find them again for your next proposal or presentation.
 
-<p><img src="docs/assets/icons/history-v1.svg" width="24" height="24" alt=""> <strong>Review results</strong><br>
-See the articles and results from each save. Locate the corresponding record when something fails.</p>
+---
 
-<p><img src="docs/assets/icons/progress-v1.svg" width="24" height="24" alt=""> <strong>See progress</strong><br>
-View progress and choose result notifications, badges, and desktop reminders.</p>
+<p align="center"><img src="docs/assets/scenarios/writing-en-sc011-rounded-v2.svg" alt="Prepare to write: Articles, Stories, Case studies, Sources." width="420"></p>
 
-<p><img src="docs/assets/icons/language-v1.svg" width="24" height="24" alt=""> <strong>Choose a language</strong><br>
-Settings can follow Obsidian or use Chinese or English. Some sidebar and runtime messages remain in Chinese.</p>
+### Writing material
 
+**For**: Writers, editors, and people who share what they know.
+
+**For example**: Keep articles and personal stories for your next piece. Find the source when you need to cite it.
+
+---
+
+<p align="center"><img src="docs/assets/scenarios/product-en-sc011-rounded-v2.svg" alt="Research products: Product notes, User feedback, Design cases, Features & prices." width="420"></p>
+
+### Product research
+
+**For**: People who build products, design, or develop software.
+
+**For example**: Keep product details, user feedback, and design examples together to compare features and prices.
+
+---
+
+<p align="center"><img src="docs/assets/scenarios/hobby-en-sc011-rounded-v2.svg" alt="Collect hobby tips: How-to guides, Composition, Plant care, Recipes." width="420"></p>
+
+### Hobby tips
+
+**For**: People who enjoy photography, gardening, or cooking.
+
+**For example**: Keep tutorials, plant care tips, and recipes handy as you practice. Add what you learn along the way.
+
+---
+
+## What it does
+
+Open a group to see what you can do.
+
+<details>
+<summary><strong>Save material</strong> · 4 features</summary>
+
+**Save articles**  
+Save IMA articles you are allowed to keep as Obsidian notes. Search, annotate, and read them alongside your other notes.
+
+**Keep originals**  
+Keep PDFs, images, and supported audio or video originals using the downloads available in IMA.
+
+**Choose material**  
+Start with 1–30 recent items, widen the search, or filter by title. Each batch has a saving limit.
+
+**Keep folders**  
+Keep the original folder names. Include subfolders and limit how many folders and levels to search.
+
+</details>
+
+<details>
+<summary><strong>Organize notes</strong> · 5 features</summary>
+
+**Make notes**  
+Turn existing PDF text into notes, with optional links to the original. Scans get a notice; text inside images is not read.
+
+**Fill missing notes**  
+Add missing notes for PDFs you have already saved, without downloading the files again.
+
+**Skip saved articles**  
+Articles recognized as already saved are skipped by default, reducing duplicate copies.
+
+**Protect notes**  
+Files with the same name are not replaced by default. Turning PDFs into notes also preserves notes made outside this plugin.
+
+**Check files**  
+Check whether a PDF can be read. If it is damaged or access is restricted, see the reason.
+
+</details>
+
+<details>
+<summary><strong>Everyday controls</strong> · 4 features</summary>
+
+**Control saving**  
+Start manually or save when Obsidian opens. Delay or cancel an automatic start, or stop a save already in progress.
+
+**Review results**  
+See which articles were saved and whether each save worked. Find the matching record if something goes wrong.
+
+**See progress**  
+Follow saving progress. Choose result reminders, notices on icons, or desktop notifications.
+
+**Choose language**  
+Use Chinese or English for settings, or follow Obsidian's language. Some sidebar text and messages are still in Chinese.
+
+</details>
+
+---
+
+### Start collecting
+
+Keep your next good find on your own computer.
+
+**[Install the plugin →](https://obsidian.md/plugins?id=ima-speed-sync)** · [Setup guide](https://github.com/oooing/ima-share-sync/blob/main/docs/GUIDE.md)
