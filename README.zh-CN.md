@@ -16,16 +16,18 @@ Windows 10 及以上 · Obsidian 1.11.4 及以上 · 已安装并登录 IMA 桌�
 
 ## 适合谁用
 
+<p align="center">
+  <img src="docs/assets/ima-share-sync-pyramid-zh-CN-v1.jpg" alt="从别人分享的资料，到保存进 Obsidian，再到继续使用的三层金字塔；适合学生、职场人、创作者、产品人、研究者和爱好者。" width="640">
+</p>
+
 <table>
   <tr>
     <td width="50%" valign="top">
-      <img src="docs/assets/scenarios/learning-v1.jpg" alt="学生对照保存的学习资料做笔记" width="360" height="240">
       <h3>学习备考</h3>
       <p><strong>适合谁</strong>：学生、备考者、正在学新技能的人。</p>
       <p><strong>举个例子</strong>：保存别人分享的课程讲义和学习文章，复习时集中查找，再用本地 AI 整理知识要点。</p>
     </td>
     <td width="50%" valign="top">
-      <img src="docs/assets/scenarios/work-v1.jpg" alt="工作者整理可再次使用的参考资料" width="360" height="240">
       <h3>工作参考</h3>
       <p><strong>适合谁</strong>：职场新人、项目负责人、常写方案的人。</p>
       <p><strong>举个例子</strong>：保存同事分享的项目案例和工作指南，下次写方案、做汇报时，快速找到参考。</p>
@@ -33,13 +35,11 @@ Windows 10 及以上 · Obsidian 1.11.4 及以上 · 已安装并登录 IMA 桌�
   </tr>
   <tr>
     <td width="50%" valign="top">
-      <img src="docs/assets/scenarios/writing-v1.jpg" alt="作者对照收集的素材构思文章" width="360" height="240">
       <h3>内容创作</h3>
       <p><strong>适合谁</strong>：自媒体作者、内容编辑、知识分享者。</p>
       <p><strong>举个例子</strong>：保存好文章、人物故事和行业案例，写作时回查出处，也可让本地 AI 整理素材、拟定提纲。</p>
     </td>
     <td width="50%" valign="top">
-      <img src="docs/assets/scenarios/product-v1.jpg" alt="产品设计者对照两份产品资料做比较" width="360" height="240">
       <h3>产品调研</h3>
       <p><strong>适合谁</strong>：产品经理、设计师、独立开发者。</p>
       <p><strong>举个例子</strong>：保存同类产品介绍、用户反馈和设计案例，规划下一次更新时，比较功能、价格与做法。</p>
@@ -47,13 +47,11 @@ Windows 10 及以上 · Obsidian 1.11.4 及以上 · 已安装并登录 IMA 桌�
   </tr>
   <tr>
     <td width="50%" valign="top">
-      <img src="docs/assets/scenarios/research-v1.jpg" alt="研究者对照报告与按时间整理的资料" width="360" height="240">
       <h3>行业研究</h3>
       <p><strong>适合谁</strong>：行业研究者、投研从业者、长期观察者。</p>
       <p><strong>举个例子</strong>：保存别人分享的研报、公司分析和行业访谈，再让本地 AI 比较不同观点，回查原文依据。</p>
     </td>
     <td width="50%" valign="top">
-      <img src="docs/assets/scenarios/hobby-v1.jpg" alt="摄影爱好者回看构图教程准备练习" width="360" height="240">
       <h3>兴趣收藏</h3>
       <p><strong>适合谁</strong>：摄影、园艺、烹饪等爱好者。</p>
       <p><strong>举个例子</strong>：保存别人分享的构图教程、养花经验或菜谱，练习时随手翻看，也能加上自己的心得。</p>

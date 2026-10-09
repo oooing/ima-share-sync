@@ -16,16 +16,18 @@ Windows 10+ · Obsidian 1.11.4+ · Installed and signed-in IMA desktop.
 
 ## Who it is for
 
+<p align="center">
+  <img src="docs/assets/ima-share-sync-pyramid-en-v1.jpg" alt="Three tiers: shared material, saved locally in Obsidian, and reuse. For students, professionals, creators, product builders, researchers, and hobbyists." width="640">
+</p>
+
 <table>
   <tr>
     <td width="50%" valign="top">
-      <img src="docs/assets/scenarios/learning-v1.jpg" alt="A student taking notes from saved learning material" width="360" height="240">
       <h3>Study and learn</h3>
       <p><strong>For</strong>: Students, exam candidates, and anyone learning a skill.</p>
       <p><strong>For example</strong>: Keep shared course handouts and learning articles together. Revisit them while studying, or ask your own local AI to outline the key ideas.</p>
     </td>
     <td width="50%" valign="top">
-      <img src="docs/assets/scenarios/work-v1.jpg" alt="A professional organizing reusable reference documents" width="360" height="240">
       <h3>Keep work references</h3>
       <p><strong>For</strong>: New hires, project leads, and people who write proposals.</p>
       <p><strong>For example</strong>: Save project examples and work guides shared by colleagues. Find the references again when preparing your next proposal or presentation.</p>
@@ -33,13 +35,11 @@ Windows 10+ · Obsidian 1.11.4+ · Installed and signed-in IMA desktop.
   </tr>
   <tr>
     <td width="50%" valign="top">
-      <img src="docs/assets/scenarios/writing-v1.jpg" alt="A writer planning an article with collected source material" width="360" height="240">
       <h3>Prepare to write</h3>
       <p><strong>For</strong>: Writers, editors, and people who share what they learn.</p>
       <p><strong>For example</strong>: Keep articles, personal stories, and industry examples. Check sources as you write, or ask your own local AI to organize material into an outline.</p>
     </td>
     <td width="50%" valign="top">
-      <img src="docs/assets/scenarios/product-v1.jpg" alt="A product builder comparing two sets of product information" width="360" height="240">
       <h3>Research products</h3>
       <p><strong>For</strong>: Product managers, designers, and independent developers.</p>
       <p><strong>For example</strong>: Save product overviews, user feedback, and design examples. Compare features, prices, and approaches when planning your next update.</p>
@@ -47,13 +47,11 @@ Windows 10+ · Obsidian 1.11.4+ · Installed and signed-in IMA desktop.
   </tr>
   <tr>
     <td width="50%" valign="top">
-      <img src="docs/assets/scenarios/research-v1.jpg" alt="A researcher reviewing reports and organized source documents" width="360" height="240">
       <h3>Follow an industry</h3>
       <p><strong>For</strong>: Industry researchers, investment analysts, and long-term observers.</p>
       <p><strong>For example</strong>: Keep shared reports, company analyses, and industry interviews. Ask your own local AI to compare viewpoints, then check the original evidence.</p>
     </td>
     <td width="50%" valign="top">
-      <img src="docs/assets/scenarios/hobby-v1.jpg" alt="A photography hobbyist revisiting composition tutorials" width="360" height="240">
       <h3>Collect hobby tips</h3>
       <p><strong>For</strong>: People who enjoy photography, gardening, cooking, and other hobbies.</p>
       <p><strong>For example</strong>: Keep composition tutorials, gardening advice, or recipes. Revisit them while practicing, and add your own observations in Obsidian.</p>
