@@ -8,11 +8,13 @@
 
 <p>Save articles and files shared through IMA as notes and files in Obsidian.<br>Find them when you need them. Use them when you write.</p>
 
-<p><a href="https://obsidian.md/plugins?id=ima-speed-sync"><strong>Install the plugin →</strong></a></p>
+<p><a href="https://obsidian.md/plugins?id=ima-speed-sync"><strong>Community listing →</strong></a></p>
 
-<p><a href="https://github.com/oooing/ima-share-sync/blob/main/docs/GUIDE.md">Setup guide</a> · <a href="https://github.com/oooing/ima-share-sync/releases/tag/0.2.0">Download files</a></p>
+<p><a href="https://github.com/oooing/ima-share-sync/blob/main/docs/GUIDE.md">Manual setup</a> · <a href="https://github.com/oooing/ima-share-sync/releases/tag/0.2.0">Download files</a></p>
 
 <p><sub>Windows 10+ · Obsidian 1.11.4+ · Installed and signed-in IMA desktop</sub></p>
+
+<p>Version 0.2.0 is released. Community installation is not yet available; follow the guide to install manually.</p>
 
 <p><a href="#who-it-helps">Who it helps</a> · <a href="#what-it-does">What it does</a></p>
 
@@ -154,4 +156,4 @@ Use Chinese or English for settings, or follow Obsidian's language. Some sidebar
 
 Keep your next good find on your own computer.
 
-**[Install the plugin →](https://obsidian.md/plugins?id=ima-speed-sync)** · [Setup guide](https://github.com/oooing/ima-share-sync/blob/main/docs/GUIDE.md)
+**[Community listing →](https://obsidian.md/plugins?id=ima-speed-sync)** · [Manual setup](https://github.com/oooing/ima-share-sync/blob/main/docs/GUIDE.md)
