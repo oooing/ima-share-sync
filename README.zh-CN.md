@@ -8,11 +8,13 @@
 
 <p>把别人通过 IMA 分享的文章和文件，存到电脑上的 Obsidian。<br>想看就查，写作就用。</p>
 
-<p><a href="https://obsidian.md/plugins?id=ima-speed-sync"><strong>安装插件 →</strong></a></p>
+<p><a href="https://obsidian.md/plugins?id=ima-speed-sync"><strong>社区页面 →</strong></a></p>
 
-<p><a href="https://github.com/oooing/ima-share-sync/blob/main/docs/GUIDE.zh-CN.md">使用指南</a> · <a href="https://github.com/oooing/ima-share-sync/releases/tag/0.2.0">下载文件</a></p>
+<p><a href="https://github.com/oooing/ima-share-sync/blob/main/docs/GUIDE.zh-CN.md">手动安装</a> · <a href="https://github.com/oooing/ima-share-sync/releases/tag/0.2.0">下载文件</a></p>
 
 <p><sub>Windows 10+ · Obsidian 1.11.4+ · 已安装并登录 IMA 电脑版</sub></p>
+
+<p>0.2.0 已发布。社区安装尚未开放，请先按指南手动安装。</p>
 
 <p><a href="#适合谁用">适合谁用</a> · <a href="#能做什么">能做什么</a></p>
 
@@ -154,4 +156,4 @@
 
 把下一份好资料，留在自己的电脑里。
 
-**[安装插件 →](https://obsidian.md/plugins?id=ima-speed-sync)** · [使用指南](https://github.com/oooing/ima-share-sync/blob/main/docs/GUIDE.zh-CN.md)
+**[社区页面 →](https://obsidian.md/plugins?id=ima-speed-sync)** · [手动安装](https://github.com/oooing/ima-share-sync/blob/main/docs/GUIDE.zh-CN.md)
