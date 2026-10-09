@@ -1,3 +1,14 @@
+/* ==========================================================================
+   【候选 2 实施】设计系统 Token：基于 emil-design-eng 动效工程学规范
+   Spring 物理缓动、微触感按压形变 scale(0.96)、药丸浮动胶囊、灵动卡片
+   ========================================================================== */
+:root {
+  --emil-ease-spring: cubic-bezier(0.16, 1, 0.3, 1);
+  --emil-ease-press: cubic-bezier(0.2, 0, 0, 1);
+  --emil-dur-fast: 160ms;
+  --emil-dur-normal: 260ms;
+}
+
 .ima-share-sync-heading {
   display: flex;
   align-items: baseline;
@@ -21,7 +32,14 @@
 }
 
 .ima-share-sync-settings-version {
+  margin-top: 36px;
   margin-bottom: 16px;
+  text-align: center;
+  font-size: var(--font-ui-smaller, 11.5px);
+  color: var(--text-faint);
+  letter-spacing: 0.03em;
+  user-select: none;
+  opacity: 0.85;
 }
 
 .ima-share-sync-has-warning {
@@ -136,28 +154,37 @@ button.ima-share-sync-back-button:focus-visible {
   margin-top: 8px;
 }
 
+/* 优雅渐变微光卡片 (Emil 灵动质感) */
 .ima-share-sync-support {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 12px;
+  gap: 14px;
   margin-bottom: 24px;
-  padding: 16px;
+  padding: 16px 20px;
   border: 1px solid var(--background-modifier-border);
   border-radius: 16px;
-  background: linear-gradient(110deg, rgba(214, 165, 39, 0.1), transparent 65%),
+  background: linear-gradient(135deg, rgba(168, 85, 247, 0.08), rgba(99, 102, 241, 0.04)),
     var(--background-secondary);
+  box-shadow: 0 4px 20px -6px rgba(0, 0, 0, 0.2);
+  transition: border-color var(--emil-dur-normal) var(--emil-ease-spring), box-shadow var(--emil-dur-normal);
+}
+
+.ima-share-sync-support:hover {
+  border-color: rgba(168, 85, 247, 0.35);
+  box-shadow: 0 8px 24px -6px rgba(168, 85, 247, 0.15);
 }
 
 .ima-share-sync-support-icon {
   display: flex;
   align-items: center;
   justify-content: center;
-  flex: 0 0 40px;
-  height: 40px;
+  flex: 0 0 42px;
+  height: 42px;
   border-radius: 12px;
-  color: var(--text-warning);
-  background: rgba(214, 165, 39, 0.12);
+  color: #c084fc;
+  background: rgba(168, 85, 247, 0.15);
+  box-shadow: 0 2px 8px rgba(168, 85, 247, 0.2);
 }
 
 .ima-share-sync-support-icon svg {
@@ -173,12 +200,13 @@ button.ima-share-sync-back-button:focus-visible {
 
 .ima-share-sync-support-title {
   color: var(--text-normal);
-  font-weight: var(--font-semibold);
+  font-weight: 600;
+  font-size: 14px;
   line-height: 1.5;
 }
 
 .ima-share-sync-support-description {
-  margin-top: 2px;
+  margin-top: 3px;
   color: var(--text-muted);
   font-size: var(--font-ui-small);
   line-height: 1.5;
@@ -191,22 +219,29 @@ button.ima-share-sync-back-button:focus-visible {
   flex: 0 1 auto;
   min-height: var(--input-height);
   max-width: 100%;
-  padding: 8px 16px;
-  border: 1px solid var(--background-modifier-border);
+  padding: 8px 18px;
+  border: 1px solid rgba(168, 85, 247, 0.35);
   border-radius: 999px;
-  color: var(--text-normal);
-  background: var(--interactive-normal);
-  box-shadow: var(--input-shadow);
+  color: #ffffff;
+  background: linear-gradient(135deg, #a855f7, #7c3aed);
+  box-shadow: 0 2px 10px rgba(168, 85, 247, 0.35);
   font-size: var(--font-ui-small);
-  font-weight: var(--font-semibold);
+  font-weight: 600;
   text-align: center;
   text-decoration: none;
   overflow-wrap: anywhere;
+  cursor: pointer;
+  outline: none;
+  transition: transform var(--emil-dur-fast) var(--emil-ease-press), filter 0.18s ease;
+}
+
+.ima-share-sync-support-link:active {
+  transform: scale(0.96);
 }
 
 .ima-share-sync-support-link:hover {
-  color: var(--text-normal);
-  background: var(--interactive-hover);
+  filter: brightness(1.08);
+  color: #ffffff;
   text-decoration: none;
 }
 
@@ -297,4 +332,655 @@ button.ima-share-sync-nav-entry:focus-visible {
   color: var(--text-muted);
   font-size: var(--font-ui-smaller);
   text-align: center;
+}
+.ima-share-sync-scope-summary {
+  margin-block: 16px 8px;
+  padding: 12px 16px;
+  border-inline-start: 3px solid var(--interactive-accent);
+  border-radius: 6px;
+  background: var(--background-secondary);
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.ima-share-sync-scope-title {
+  margin-block-end: 4px;
+  color: var(--text-normal);
+  font-weight: var(--font-semibold);
+}
+
+/* 高级设置卡片折叠面板 */
+.ima-share-sync-advanced {
+  margin-block: 16px 20px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 12px;
+  background: var(--background-secondary);
+  overflow: hidden;
+  transition: border-color 0.18s ease, box-shadow 0.18s ease;
+}
+
+.ima-share-sync-advanced:hover {
+  border-color: var(--background-modifier-border-hover, var(--interactive-accent));
+}
+
+.ima-share-sync-advanced > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 13px 18px;
+  color: var(--text-normal);
+  font-size: var(--font-ui-small, 13px);
+  font-weight: 500;
+  cursor: pointer;
+  user-select: none;
+  background: transparent;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.ima-share-sync-advanced > summary:hover {
+  background: var(--background-modifier-hover, rgba(255, 255, 255, 0.03));
+  color: var(--text-accent, var(--interactive-accent));
+}
+
+.ima-share-sync-advanced > summary:focus-visible {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: -2px;
+}
+
+.ima-share-sync-advanced[open] > summary {
+  border-bottom: 1px solid var(--background-modifier-border);
+  background: rgba(0, 0, 0, 0.06);
+}
+
+/* 高级设置内容区：统一列表组容器 */
+.ima-share-sync-advanced-content {
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* 顶部当前同步范围状态条（胶囊式摘要） */
+.ima-advanced-scope-banner {
+  margin: 14px 16px 8px 16px !important;
+  padding: 9px 13px !important;
+  border-radius: 8px !important;
+  background: rgba(124, 58, 237, 0.08) !important;
+  border: 1px solid rgba(124, 58, 237, 0.2) !important;
+  color: var(--text-normal) !important;
+  font-size: var(--font-ui-smaller, 12px) !important;
+  line-height: 1.5 !important;
+  display: flex !important;
+  align-items: center !important;
+  gap: 8px !important;
+}
+
+.ima-advanced-scope-banner::before {
+  content: "";
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background-color: var(--interactive-accent, #7c3aed);
+  box-shadow: 0 0 6px var(--interactive-accent, #7c3aed);
+  flex-shrink: 0;
+}
+
+/* 统一重置内容区所有 setting-item，消除独立突兀的大黑块 */
+.ima-share-sync-advanced-content > .setting-item {
+  margin: 0 !important;
+  padding: 13px 18px !important;
+  border: none !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  border-bottom: 1px solid var(--background-modifier-border, rgba(255, 255, 255, 0.05)) !important;
+  transition: background-color 0.12s ease;
+}
+
+.ima-share-sync-advanced-content > .setting-item:last-child {
+  border-bottom: none !important;
+}
+
+.ima-share-sync-advanced-content > .setting-item:hover {
+  background: var(--background-modifier-hover, rgba(255, 255, 255, 0.025)) !important;
+}
+
+/* 设置项内部排版优化 */
+.ima-share-sync-advanced-content .setting-item-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-normal);
+  line-height: 1.4;
+}
+
+.ima-share-sync-advanced-content .setting-item-description {
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--text-muted);
+  margin-top: 3px;
+}
+
+/* 纯说明项（“数量规则”与“排序依据”）轻量化提示小条 */
+.ima-share-sync-advanced-content > .setting-item.ima-advanced-info-item,
+.ima-share-sync-advanced-content > .setting-item:not(:has(.setting-item-control)) {
+  padding: 9px 18px !important;
+  background: rgba(0, 0, 0, 0.04) !important;
+}
+
+.ima-share-sync-advanced-content > .setting-item.ima-advanced-info-item .setting-item-info,
+.ima-share-sync-advanced-content > .setting-item:not(:has(.setting-item-control)) .setting-item-info {
+  width: 100%;
+}
+
+.ima-share-sync-advanced-content > .setting-item.ima-advanced-info-item .setting-item-name,
+.ima-share-sync-advanced-content > .setting-item:not(:has(.setting-item-control)) .setting-item-name {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ima-share-sync-advanced-content > .setting-item.ima-advanced-info-item .setting-item-name::before,
+.ima-share-sync-advanced-content > .setting-item:not(:has(.setting-item-control)) .setting-item-name::before {
+  content: "ⓘ";
+  font-size: 12px;
+  font-weight: bold;
+  opacity: 0.8;
+  color: var(--text-accent, var(--interactive-accent));
+}
+
+.ima-share-sync-advanced-content > .setting-item.ima-advanced-info-item .setting-item-description,
+.ima-share-sync-advanced-content > .setting-item:not(:has(.setting-item-control)) .setting-item-description {
+  font-size: 11px;
+  color: var(--text-faint);
+  line-height: 1.45;
+  margin-top: 2px;
+}
+
+/* 下拉菜单和控件对齐美化 */
+.ima-share-sync-advanced-content .setting-item-control select,
+.ima-share-sync-advanced-content .setting-item-control .dropdown {
+  min-width: 95px;
+  height: 29px;
+  font-size: 12px;
+  border-radius: 6px;
+  border-color: var(--background-modifier-border);
+}
+
+/* 双列栅格：左右独立列，右列级联面板与右卡片天然完全齐宽 */
+.ima-mode-columns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  align-items: start;
+  margin-block: 12px 16px;
+}
+
+.ima-mode-column {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+@media (max-width: 600px) {
+  .ima-mode-columns {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* 主模式卡片样式 (Emil 灵动卡片层级) */
+.ima-main-mode-card {
+  background: var(--background-secondary);
+  border: 1.5px solid var(--background-modifier-border);
+  border-radius: 14px;
+  padding: 15px 17px;
+  cursor: pointer;
+  position: relative;
+  transition: all var(--emil-dur-normal) var(--emil-ease-spring);
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  min-height: 104px;
+  user-select: none;
+  outline: none;
+}
+
+.ima-main-mode-card:hover {
+  border-color: rgba(168, 85, 247, 0.4);
+  background: var(--background-modifier-hover, var(--background-secondary));
+  transform: translateY(-1px);
+}
+
+.ima-main-mode-card:active {
+  transform: scale(0.98);
+}
+
+.ima-main-mode-card.is-active {
+  border-color: #a855f7;
+  background: linear-gradient(135deg, rgba(168, 85, 247, 0.12), rgba(124, 58, 237, 0.05)),
+    var(--background-secondary);
+  box-shadow: 0 8px 24px -6px rgba(168, 85, 247, 0.35);
+}
+
+.ima-card-header-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.ima-card-icon {
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: color var(--emil-dur-fast) ease;
+}
+
+.ima-main-mode-card.is-active .ima-card-icon {
+  color: #a855f7;
+}
+
+/* 右上角圆形对勾徽章 */
+.ima-check-circle {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 1.5px solid var(--background-modifier-border-hover);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all var(--emil-dur-fast) var(--emil-ease-spring);
+}
+
+.ima-main-mode-card.is-active .ima-check-circle {
+  background: linear-gradient(135deg, #a855f7, #7c3aed);
+  border-color: #a855f7;
+  box-shadow: 0 2px 8px rgba(168, 85, 247, 0.35);
+}
+
+.ima-check-circle svg {
+  width: 11px;
+  height: 11px;
+  stroke: #ffffff;
+  opacity: 0;
+  transition: opacity var(--emil-dur-fast) ease;
+}
+
+.ima-main-mode-card.is-active .ima-check-circle svg {
+  opacity: 1;
+}
+
+.ima-card-title {
+  font-size: 14.5px;
+  font-weight: 600;
+  color: var(--text-normal);
+  margin-bottom: 3px;
+}
+
+.ima-card-summary-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12.5px;
+  color: var(--text-muted);
+}
+
+.ima-card-arrow {
+  color: var(--text-muted);
+  transition: transform var(--emil-dur-normal) var(--emil-ease-spring);
+  display: flex;
+  align-items: center;
+}
+
+.ima-card-arrow.is-expanded {
+  transform: rotate(180deg);
+}
+
+/* 级联悬浮选择面板（绝对定位覆盖，不挤压下方任何内容，Emil 弹簧下沉动画） */
+.ima-cascade-popover-panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  right: 0;
+  z-index: 80;
+  background: var(--background-secondary);
+  border: 1.5px solid var(--background-modifier-border-hover, rgba(168, 85, 247, 0.45));
+  border-radius: 14px;
+  box-shadow: 0 18px 45px -4px rgba(0, 0, 0, 0.65), 0 0 0 1px rgba(168, 85, 247, 0.2);
+  margin-top: 0;
+  padding: 12px 14px;
+  animation: emilSlideDown 0.2s var(--emil-ease-spring);
+}
+
+@keyframes emilSlideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.ima-popover-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 9px;
+  padding-bottom: 5px;
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.ima-popover-breadcrumb {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.ima-popover-breadcrumb .crumb-active {
+  color: var(--text-normal);
+  font-weight: 600;
+}
+
+.ima-popover-close-btn {
+  width: 22px;
+  height: 22px;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  transition: all var(--emil-dur-fast) ease;
+  padding: 0;
+}
+
+.ima-popover-close-btn:hover {
+  color: var(--text-normal);
+  background: var(--background-modifier-hover);
+}
+
+.ima-popover-close-btn:active {
+  transform: scale(0.92);
+}
+
+/* 选项列表单行紧凑项 */
+.ima-cascade-items-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ima-cascade-option-row {
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  padding: 6px 10px;
+  height: 33px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  transition: all 0.15s ease;
+  user-select: none;
+}
+
+.ima-cascade-option-row:hover {
+  background: var(--background-modifier-hover);
+}
+
+.ima-cascade-option-row:active {
+  transform: scale(0.98);
+}
+
+.ima-cascade-option-row.is-active {
+  background: rgba(168, 85, 247, 0.14);
+  border-color: rgba(168, 85, 247, 0.4);
+}
+
+.ima-option-row-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.8px;
+}
+
+.ima-option-name {
+  color: var(--text-normal);
+  font-weight: 500;
+}
+
+.ima-cascade-option-row.is-active .ima-option-name {
+  color: #c084fc;
+  font-weight: 600;
+}
+
+.ima-option-badge {
+  font-size: 10.5px;
+  padding: 2px 7px;
+  border-radius: 9999px;
+  background: rgba(168, 85, 247, 0.18);
+  color: #c084fc;
+  border: 1px solid rgba(168, 85, 247, 0.3);
+  line-height: 1.2;
+  margin-left: 4px;
+}
+
+/* “最新的 [ ] 份文件” 行内紧凑输入框 */
+.ima-custom-input-wrapper {
+  display: inline-flex;
+  align-items: center;
+  margin: 0 2px;
+}
+
+.ima-compact-num-input {
+  width: 50px;
+  height: 24px;
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  color: #c084fc;
+  font-size: 12.5px;
+  font-weight: 600;
+  text-align: center;
+  padding: 0 2px;
+  outline: none;
+  transition: all var(--emil-dur-fast) var(--emil-ease-spring);
+  -moz-appearance: textfield;
+}
+
+.ima-compact-num-input::-webkit-outer-spin-button,
+.ima-compact-num-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.ima-compact-num-input:focus {
+  border-color: #a855f7;
+  box-shadow: 0 0 0 2px rgba(168, 85, 247, 0.3);
+}
+
+.ima-option-check {
+  color: #a855f7;
+  opacity: 0;
+  display: flex;
+  align-items: center;
+  transition: opacity var(--emil-dur-fast) ease;
+}
+
+.ima-cascade-option-row.is-active .ima-option-check {
+  opacity: 1;
+}
+
+/* 面板底部说明条 */
+.ima-popover-footer-note {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  color: var(--text-muted);
+  margin-top: 8px;
+  padding-top: 6px;
+  border-top: 1px solid var(--background-modifier-border);
+}
+
+/* 状态控制与测试/无障碍隐藏类 */
+.ima-hidden-setting,
+.ima-hidden-summary,
+.ima-share-sync-scope-summary,
+.ima-cascade-popover-panel.is-hidden {
+  display: none !important;
+}
+
+.ima-option-check.is-visible {
+  opacity: 1 !important;
+}
+
+/* ==========================================================================
+   【候选 2 专属核心】药丸浮动胶囊 Tab 导航 (Pill Segmented Tab Bar with Spring)
+   ========================================================================== */
+.ima-settings-tabs-header {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  margin-top: 14px;
+  margin-bottom: 22px;
+  margin-left: auto !important;
+  margin-right: auto !important;
+  width: fit-content !important;
+  max-width: 100%;
+  padding: 4px;
+  background: rgba(0, 0, 0, 0.22) !important;
+  border: 1px solid var(--background-modifier-border) !important;
+  border-radius: 9999px !important;
+  overflow-x: auto;
+  scrollbar-width: none;
+  box-shadow: 0 3px 12px rgba(0, 0, 0, 0.1);
+  user-select: none;
+}
+
+.theme-light .ima-settings-tabs-header {
+  background: rgba(0, 0, 0, 0.05) !important;
+}
+
+.ima-settings-tabs-header::-webkit-scrollbar {
+  display: none;
+}
+
+/* 覆盖 Obsidian 全局 button 样式，实现 Emil 物理触感药丸胶囊 */
+button.ima-settings-tab-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 8px 18px !important;
+  margin: 0 !important;
+  font-size: var(--font-ui-small, 13px) !important;
+  font-weight: 500 !important;
+  color: var(--text-muted) !important;
+  background: transparent !important;
+  border: none !important;
+  border-radius: 9999px !important;
+  box-shadow: none !important;
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+  outline: none !important;
+  transition: color var(--emil-dur-fast) ease, background-color var(--emil-dur-fast) ease, transform var(--emil-dur-fast) var(--emil-ease-press), box-shadow var(--emil-dur-fast) ease;
+}
+
+button.ima-settings-tab-btn svg {
+  width: 15px;
+  height: 15px;
+  opacity: 0.65;
+  transition: opacity var(--emil-dur-fast) ease, stroke var(--emil-dur-fast) ease;
+  vertical-align: middle;
+}
+
+button.ima-settings-tab-btn:hover {
+  color: var(--text-normal) !important;
+  background: var(--background-modifier-hover, rgba(255, 255, 255, 0.05)) !important;
+}
+
+button.ima-settings-tab-btn:hover svg {
+  opacity: 0.95;
+}
+
+button.ima-settings-tab-btn:active {
+  transform: scale(0.96);
+}
+
+button.ima-settings-tab-btn.is-active {
+  color: #ffffff !important;
+  font-weight: 600 !important;
+  background: linear-gradient(135deg, #a855f7, #7c3aed) !important;
+  box-shadow: 0 3px 12px rgba(168, 85, 247, 0.4) !important;
+}
+
+button.ima-settings-tab-btn.is-active svg {
+  opacity: 1;
+  stroke: #ffffff !important;
+}
+
+/* 窗口内容面板入场动效 (纯垂直轻位移与透明度淡入，绝不缩放宽度) */
+.ima-settings-tab-content {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  animation: emilFadeIn 0.18s var(--emil-ease-spring);
+}
+
+.ima-settings-tab-content.is-hidden {
+  display: none !important;
+}
+
+@keyframes emilFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* 锁定滚动槽位与宽度稳定性，防止 Tab 切换时整宽抖动 */
+.vertical-tab-content,
+.vertical-tab-content-container,
+.ima-settings-tab-content {
+  scrollbar-gutter: stable;
+  box-sizing: border-box;
+}
+
+/* Emil 触感增强：按钮通用微按压回弹与开关阻尼 */
+.mod-cta:active,
+button:not(.ima-settings-tab-btn):not(.ima-compact-num-input):active {
+  transform: scale(0.97);
+  transition: transform var(--emil-dur-fast) var(--emil-ease-press);
+}
+
+.checkbox-container {
+  transition: transform var(--emil-dur-fast) var(--emil-ease-spring), background-color var(--emil-dur-normal) var(--emil-ease-spring) !important;
+}
+
+.checkbox-container:active {
+  transform: scale(0.95);
+}
+
+.checkbox-container:active {
+  transform: scale(0.95);
 }

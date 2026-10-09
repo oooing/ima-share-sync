@@ -1,12 +1,15 @@
 import { watch as watchFiles } from "node:fs";
-import { copyFile, mkdir, rm } from "node:fs/promises";
+import { copyFile, mkdir, readFile, rm } from "node:fs/promises";
 import process from "node:process";
 import * as esbuild from "esbuild";
+import { pdfWorkerPlugin } from "./scripts/pdf-worker-build.mjs";
+import { markdownRunnerPlugin } from "./scripts/markdown-runner-build.mjs";
 
 const production = process.argv.includes("production");
 const watchMode = process.argv.includes("watch");
 const staticFiles = new Set(["manifest.json", "styles.css"]);
 const pendingCopies = new Map();
+const thirdPartyNotices = await readFile("THIRD-PARTY-NOTICES.txt", "utf8");
 
 async function copyStaticFile(fileName) {
   await copyFile(fileName, "dist/" + fileName);
@@ -30,7 +33,7 @@ function scheduleStaticCopy(fileName) {
 
 const options = {
   banner: {
-    js: "/* Generated from the public TypeScript and PowerShell sources. */",
+    js: "/* Generated from the public TypeScript and PowerShell sources. */\n/*\n" + thirdPartyNotices + "\n*/",
   },
   bundle: true,
   entryPoints: ["src/main.ts"],
@@ -42,6 +45,7 @@ const options = {
     "fs/promises",
     "os",
     "path",
+    "worker_threads",
   ],
   format: "cjs",
   legalComments: "none",
@@ -54,6 +58,7 @@ const options = {
   platform: "browser",
   sourcemap: production ? false : "inline",
   target: "es2022",
+  plugins: [pdfWorkerPlugin(), markdownRunnerPlugin()],
 };
 
 await rm("dist", { recursive: true, force: true });

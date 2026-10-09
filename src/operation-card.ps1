@@ -13,63 +13,85 @@ if ($SmokeTest) {
         Title="IMA Share Sync · 桌面操作提示" Width="340" SizeToContent="Height"
         WindowStyle="None" ResizeMode="NoResize" AllowsTransparency="True" Background="Transparent"
         ShowInTaskbar="False" ShowActivated="False" Topmost="True" FontFamily="Microsoft YaHei UI">
-  <Border Background="#242329" BorderBrush="#55515F" BorderThickness="1" CornerRadius="12" Padding="16">
+  <Border Background="#161620" BorderBrush="#36334A" BorderThickness="1.2" CornerRadius="16" Padding="17,16,17,16">
     <StackPanel>
-      <StackPanel Orientation="Horizontal">
-        <!-- Same simplified panda/book geometry as src/icon.ts; no external image dependency. -->
-        <Viewbox x:Name="BrandIcon" Width="20" Height="20" Margin="0,0,8,0">
-          <Canvas Width="256" Height="256">
-            <Canvas.Resources>
-              <Style TargetType="Path">
-                <Setter Property="Stroke" Value="#C8ACFF"/>
-                <Setter Property="StrokeThickness" Value="14.933333333333332"/>
-                <Setter Property="StrokeStartLineCap" Value="Round"/>
-                <Setter Property="StrokeEndLineCap" Value="Round"/>
-                <Setter Property="StrokeLineJoin" Value="Round"/>
-              </Style>
-            </Canvas.Resources>
-            <Path Data="M45 160V61.67A40.67 40.67 0 0 1 85.67 21H170.33A40.67 40.67 0 0 1 211 61.67V160"/>
-            <Path StrokeThickness="10.666666666666666">
-              <Path.Data>
-                <GeometryGroup>
-                  <EllipseGeometry Center="67.41,47.97" RadiusX="14.77" RadiusY="24.36"><EllipseGeometry.Transform><RotateTransform Angle="36" CenterX="67.41" CenterY="47.97"/></EllipseGeometry.Transform></EllipseGeometry>
-                  <EllipseGeometry Center="188.59,47.97" RadiusX="14.77" RadiusY="24.36"><EllipseGeometry.Transform><RotateTransform Angle="-36" CenterX="188.59" CenterY="47.97"/></EllipseGeometry.Transform></EllipseGeometry>
-                  <EllipseGeometry Center="96.46,110.61" RadiusX="16.6" RadiusY="24.36"><EllipseGeometry.Transform><RotateTransform Angle="36" CenterX="96.46" CenterY="110.61"/></EllipseGeometry.Transform></EllipseGeometry>
-                  <EllipseGeometry Center="159.54,110.61" RadiusX="16.6" RadiusY="24.36"><EllipseGeometry.Transform><RotateTransform Angle="-36" CenterX="159.54" CenterY="110.61"/></EllipseGeometry.Transform></EllipseGeometry>
-                </GeometryGroup>
-              </Path.Data>
-            </Path>
-            <Path Fill="#C8ACFF" StrokeThickness="0"><Path.Data><EllipseGeometry Center="128,131.49" RadiusX="9.13" RadiusY="6.79"/></Path.Data></Path>
-            <Path Data="M24 161C65 158 102 169 128 188C154 169 191 158 232 161V218C191 216 154 225 128 241C102 225 65 216 24 218Z"/>
-            <Path Data="M128 188V241" StrokeThickness="10.666666666666666"/>
-          </Canvas>
-        </Viewbox>
-        <TextBlock Text="IMA Share Sync" Foreground="#C8ACFF" FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center"/>
-      </StackPanel>
-      <TextBlock x:Name="Heading" Text="即将自动同步" Foreground="#FFFFFF" FontSize="16" FontWeight="SemiBold" Margin="0,8,0,8"/>
-      <TextBlock x:Name="Body" TextWrapping="Wrap" TextTrimming="CharacterEllipsis" MaxHeight="63" Foreground="#DDD9E5" FontSize="13" LineHeight="21"/>
-      <TextBlock x:Name="Hint" TextWrapping="Wrap" Foreground="#AAA4B5" FontSize="12" Margin="0,10,0,0"/>
-      <ScrollViewer x:Name="DetailsBox" Visibility="Collapsed" MaxHeight="120" VerticalScrollBarVisibility="Auto" Margin="0,12,0,0">
-        <TextBlock x:Name="DetailsText" TextWrapping="Wrap" Foreground="#DDD9E5" FontSize="12" LineHeight="20"/>
+      <DockPanel LastChildFill="False">
+        <StackPanel Orientation="Horizontal" DockPanel.Dock="Left">
+          <!-- Same simplified panda/book geometry as src/icon.ts; no external image dependency. -->
+          <Viewbox x:Name="BrandIcon" Width="20" Height="20" Margin="0,0,8,0">
+            <Canvas Width="256" Height="256">
+              <Canvas.Resources>
+                <Style TargetType="Path">
+                  <Setter Property="Stroke" Value="#C8ACFF"/>
+                  <Setter Property="StrokeThickness" Value="14.933333333333332"/>
+                  <Setter Property="StrokeStartLineCap" Value="Round"/>
+                  <Setter Property="StrokeEndLineCap" Value="Round"/>
+                  <Setter Property="StrokeLineJoin" Value="Round"/>
+                </Style>
+              </Canvas.Resources>
+              <Path Data="M45 160V61.67A40.67 40.67 0 0 1 85.67 21H170.33A40.67 40.67 0 0 1 211 61.67V160"/>
+              <Path StrokeThickness="10.666666666666666">
+                <Path.Data>
+                  <GeometryGroup>
+                    <EllipseGeometry Center="67.41,47.97" RadiusX="14.77" RadiusY="24.36"><EllipseGeometry.Transform><RotateTransform Angle="36" CenterX="67.41" CenterY="47.97"/></EllipseGeometry.Transform></EllipseGeometry>
+                    <EllipseGeometry Center="188.59,47.97" RadiusX="14.77" RadiusY="24.36"><EllipseGeometry.Transform><RotateTransform Angle="-36" CenterX="188.59" CenterY="47.97"/></EllipseGeometry.Transform></EllipseGeometry>
+                    <EllipseGeometry Center="96.46,110.61" RadiusX="16.6" RadiusY="24.36"><EllipseGeometry.Transform><RotateTransform Angle="36" CenterX="96.46" CenterY="110.61"/></EllipseGeometry.Transform></EllipseGeometry>
+                    <EllipseGeometry Center="159.54,110.61" RadiusX="16.6" RadiusY="24.36"><EllipseGeometry.Transform><RotateTransform Angle="-36" CenterX="159.54" CenterY="110.61"/></EllipseGeometry.Transform></EllipseGeometry>
+                  </GeometryGroup>
+                </Path.Data>
+              </Path>
+              <Path Fill="#C8ACFF" StrokeThickness="0"><Path.Data><EllipseGeometry Center="128,131.49" RadiusX="9.13" RadiusY="6.79"/></Path.Data></Path>
+              <Path Data="M24 161C65 158 102 169 128 188C154 169 191 158 232 161V218C191 216 154 225 128 241C102 225 65 216 24 218Z"/>
+              <Path Data="M128 188V241" StrokeThickness="10.666666666666666"/>
+            </Canvas>
+          </Viewbox>
+          <TextBlock Text="IMA Share Sync" Foreground="#C8ACFF" FontSize="12.5" FontWeight="SemiBold" VerticalAlignment="Center"/>
+        </StackPanel>
+        <Border DockPanel.Dock="Right" Background="#261A3D" BorderBrush="#4A2F78" BorderThickness="1" CornerRadius="999" Padding="8,2" VerticalAlignment="Center">
+          <StackPanel Orientation="Horizontal">
+            <Ellipse Width="6" Height="6" Fill="#A855F7" Margin="0,0,5,0" VerticalAlignment="Center"/>
+            <TextBlock Text="SYNC" Foreground="#D8B4FE" FontSize="10" FontWeight="Bold" VerticalAlignment="Center"/>
+          </StackPanel>
+        </Border>
+      </DockPanel>
+      <TextBlock x:Name="Heading" Text="即将自动同步" Foreground="#FFFFFF" FontSize="16" FontWeight="SemiBold" Margin="0,10,0,6"/>
+      <TextBlock x:Name="Body" TextWrapping="Wrap" TextTrimming="CharacterEllipsis" MaxHeight="63" Foreground="#DDD9E5" FontSize="12.8" LineHeight="19"/>
+      <TextBlock x:Name="Hint" TextWrapping="Wrap" Foreground="#9D98AA" FontSize="11.8" Margin="0,8,0,0"/>
+      <ScrollViewer x:Name="DetailsBox" Visibility="Collapsed" MaxHeight="110" VerticalScrollBarVisibility="Auto" Margin="0,10,0,0">
+        <Border Background="#101017" BorderBrush="#2F2D40" BorderThickness="1" CornerRadius="7" Padding="10,8">
+          <TextBlock x:Name="DetailsText" TextWrapping="Wrap" Foreground="#DDD9E5" FontSize="11.5" LineHeight="18"/>
+        </Border>
       </ScrollViewer>
-      <WrapPanel Margin="0,16,0,0">
+      <WrapPanel Margin="0,14,0,0">
         <WrapPanel.Resources>
           <Style TargetType="Button">
-            <Setter Property="Padding" Value="12,7"/>
-            <Setter Property="Margin" Value="0,0,8,4"/>
+            <Setter Property="Height" Value="29"/>
+            <Setter Property="Padding" Value="13,0"/>
+            <Setter Property="Margin" Value="0,0,8,6"/>
             <Setter Property="FontSize" Value="12"/>
+            <Setter Property="FontWeight" Value="Medium"/>
             <Setter Property="Cursor" Value="Hand"/>
-            <Setter Property="Background" Value="#E2D4FF"/>
-            <Setter Property="Foreground" Value="#242329"/>
-            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Background" Value="#252533"/>
+            <Setter Property="Foreground" Value="#E2E2EA"/>
+            <Setter Property="BorderBrush" Value="#3D3B50"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Template">
+              <Setter.Value>
+                <ControlTemplate TargetType="Button">
+                  <Border x:Name="btnBorder" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="7">
+                    <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" Margin="{TemplateBinding Padding}"/>
+                  </Border>
+                </ControlTemplate>
+              </Setter.Value>
+            </Setter>
           </Style>
         </WrapPanel.Resources>
-        <Button x:Name="Start" Content="立即开始"/>
+        <Button x:Name="Start" Content="立即开始" Background="#9333EA" Foreground="#FFFFFF" BorderThickness="0"/>
         <Button x:Name="Later" Content="5 分钟后"/>
         <Button x:Name="Cancel" Content="取消"/>
-        <Button x:Name="Stop" Content="停止" Visibility="Collapsed"/>
+        <Button x:Name="Stop" Content="停止" Visibility="Collapsed" Background="#3E1A22" Foreground="#FFA3AD" BorderBrush="#6E2835"/>
         <Button x:Name="Details" Content="查看记录" Visibility="Collapsed"/>
-        <Button x:Name="Dismiss" Content="关闭" Visibility="Collapsed"/>
+        <Button x:Name="Dismiss" Content="关闭" Visibility="Collapsed" Background="#9333EA" Foreground="#FFFFFF" BorderThickness="0"/>
       </WrapPanel>
     </StackPanel>
   </Border>

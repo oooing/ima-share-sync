@@ -8,7 +8,17 @@
 
 Found valuable investment research, industry insights, or a curated collection shared through IMA? Take it beyond online reading.
 
-IMA Share Sync saves **text articles shared by others through IMA** as local Markdown in Obsidian, including paid shares you have permission to save. Build an archive you can search, annotate, and analyze with an AI agent you configure.
+IMA Share Sync saves **text articles and permitted original files shared through IMA** into your Obsidian vault, with local PDF-to-Markdown conversion, including paid shares you have permission to save. Build an archive you can search, annotate, and analyze with an AI agent you configure.
+
+## What is new in 0.2.0
+
+- Sync recent items or choose Sync All, with subfolder depth, title filters, and folder limits.
+- Save permitted original files and validate PDF page structure before importing.
+- Convert PDF text to Markdown locally; keep a link to the original and fill missing notes manually. No OCR.
+- Organize settings into Sync Scope, Convert, Notices, and General, with Chinese / English selection.
+- Keep old per-folder limits until you explicitly migrate to a total-per-run limit.
+
+[Release notes](https://github.com/oooing/ima-share-sync/releases/tag/0.2.0) · [Selection rules](docs/general-selection.md)
 
 ## Investment research: follow today’s developments, understand what changed
 
@@ -36,12 +46,12 @@ Choose an IMA source and an Obsidian destination to start syncing. Local Markdow
 
 Windows 10+ · Obsidian 1.11.4+ · Signed-in IMA desktop with access to the shared content · No other plugins needed.
 
-[Install the latest release](https://github.com/oooing/ima-share-sync/releases/latest) with the [setup guide](docs/GUIDE.md). Choose your source and destination, then sync. Startup sync is optional; the plugin UI currently uses Chinese.
+[Install the latest release](https://github.com/oooing/ima-share-sync/releases/latest) with the [setup guide](docs/GUIDE.md). Choose your source and destination, then sync. Startup sync is optional; the settings support Chinese and English.
 
 ## Before you sync
 
 - Recognized saved articles are skipped by default; results are logged.
-- Desktop automation may open IMA; you can stop it. PDFs, images, and attachments are not fully supported.
+- Desktop automation may open IMA; you can stop it. Original files require an available IMA download route. Scanned PDFs get a linked placeholder; OCR is not included.
 - Save only with permission. No paid-content unlocking or bypassing restrictions; local copies do not grant copyright or redistribution rights.
 
 No telemetry or custom upload servers. IMA needs internet; cloud agents or vault-sync services may upload content you authorize.

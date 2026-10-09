@@ -1,0 +1,339 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>IMA Share Sync · 设置验收</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/styles.css">
+  <style>
+    :root {
+      color-scheme: dark;
+      --text-normal: #dedede;
+      --text-muted: #aaa;
+      --text-warning: #e3b854;
+      --background-primary: #202020;
+      --background-secondary: #262626;
+      --background-modifier-border: #454545;
+      --background-modifier-hover: #333;
+      --interactive-accent: #af94f8;
+      --interactive-normal: #303030;
+      --interactive-hover: #3b3b3b;
+      --input-shadow: none;
+      --font-ui-small: .8125rem;
+      --font-ui-smaller: .75rem;
+      --font-ui-medium: 1rem;
+      --font-semibold: 600;
+      --input-height: 2rem;
+      --size-2-2: .5rem;
+      --size-4-3: .75rem;
+      --size-4-6: 1.5rem;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #181818; color: var(--text-normal); font: .875rem/1.6 system-ui, sans-serif; }
+    .fixture-shell { width: min(100%, 58rem); margin-inline: auto; padding: 2rem; min-height: 100vh; background: var(--background-primary); }
+    .fixture-header { margin-block-end: 1.5rem; }
+    .fixture-header h1 { margin: 0; font-size: 1.5rem; line-height: 1.4; }
+    .fixture-note { margin: .4rem 0 0; color: var(--text-muted); font-size: .8125rem; }
+    .fixture-links { display: flex; flex-wrap: wrap; gap: 1rem; margin-block-start: .5rem; }
+    a { color: #c3adff; }
+    a[aria-current="page"] { font-weight: 600; }
+    .setting-item { display: flex; align-items: center; justify-content: space-between; gap: 1.5rem; padding-block: 1.05rem; border-block-end: 1px solid #343434; }
+    .setting-item-info { flex: 1 1 auto; min-width: 0; }
+    .setting-item-name { display: block; font-weight: 500; overflow-wrap: anywhere; }
+    .setting-item-description { margin-block-start: .2rem; color: var(--text-muted); font-size: .8125rem; overflow-wrap: anywhere; }
+    .setting-item-control { display: flex; flex: 0 0 auto; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: .5rem; max-width: 45%; }
+    .setting-item.mod-heading { margin-block-start: 1.5rem; }
+    .setting-item.mod-heading h2 { margin: 0; font-size: 1rem; font-weight: 600; }
+    input, select, button { font: inherit; color: inherit; border: 1px solid #626262; border-radius: .375rem; background: var(--interactive-normal); }
+    input:not([type="checkbox"]), select { min-height: 2.25rem; max-width: 100%; padding: .375rem .625rem; }
+    input[type="text"] { width: 14rem; }
+    input[type="range"] { width: 11rem; padding-inline: 0; }
+    select { cursor: pointer; }
+    input[type="checkbox"] { width: 1.25rem; height: 1.25rem; margin: .625rem; cursor: pointer; accent-color: var(--interactive-accent); }
+    input[type="range"] { accent-color: var(--interactive-accent); }
+    button { min-height: 2.25rem; padding: .375rem .75rem; cursor: pointer; }
+    button:hover { background: var(--interactive-hover); }
+    button.mod-cta { background: #7457bf; border-color: #a38ad8; }
+    :is(input, select, button):disabled { opacity: .45; cursor: not-allowed; }
+    :is(input, select, button, a, summary):focus-visible { outline: 2px solid #c3adff; outline-offset: 3px; }
+    .mod-warning { color: var(--text-warning); }
+    #fixture-error { color: #ffb1b1; white-space: pre-wrap; overflow-wrap: anywhere; }
+    #fixture-notices { position: fixed; inset: 1rem 1rem auto auto; width: min(24rem, calc(100vw - 2rem)); z-index: 10; }
+    .fixture-notice { margin-block-end: .5rem; padding: 1rem; border: 1px solid #626262; border-radius: .5rem; background: #303030; box-shadow: 0 .4rem 2rem #0008; }
+    dialog { width: min(35rem, calc(100vw - 2rem)); max-height: calc(100vh - 2rem); padding: 1.5rem; border: 1px solid #626262; border-radius: .75rem; background: var(--background-primary); color: var(--text-normal); }
+    dialog::backdrop { background: #0009; }
+    dialog h2 { margin-block-start: 0; font-size: 1.2rem; }
+    @media (max-width: 640px) {
+      .fixture-shell { padding: 1.25rem; }
+      .setting-item { align-items: flex-start; flex-direction: column; gap: .625rem; }
+      .setting-item-control { justify-content: flex-start; max-width: 100%; width: 100%; }
+      input[type="text"], select { width: 100%; }
+      input, select, button { font-size: 1rem; }
+      input:not([type="checkbox"]), select, button, summary { min-height: 3rem; }
+      input[type="checkbox"] { width: 1.5rem; height: 1.5rem; margin: .75rem; }
+    }
+  </style>
+</head>
+<body>
+  <main class="fixture-shell">
+    <header class="fixture-header">
+      <h1>IMA Share Sync</h1>
+      <p class="fixture-note" id="fixture-scenario"></p>
+      <nav class="fixture-links" aria-label="隔离验收场景">
+        <a href="/" id="existing-link">旧版配置</a>
+        <a href="/?new=1" id="new-link">全新安装</a>
+      </nav>
+    </header>
+    <p id="fixture-error" role="alert" hidden></p>
+    <form id="settings" action="/" method="post" aria-label="IMA Share Sync 插件设置"></form>
+  </main>
+  <div id="fixture-notices" aria-live="polite"></div>
+  <script>
+    // Only the Obsidian host is simulated. All settings logic and plugin CSS are real dist output.
+    // No vault, local persistence, desktop API, child process, or network API is available here.
+    const fixtureErrors = [];
+    const reportError = (error) => {
+      fixtureErrors.push(String(error?.stack || error));
+      const box = document.getElementById('fixture-error');
+      box.hidden = false;
+      box.textContent = fixtureErrors.at(-1);
+      console.error(error);
+    };
+    const invoke = (callback, value) => {
+      try { Promise.resolve(callback(value)).catch(reportError); } catch (error) { reportError(error); }
+    };
+    const blocked = (operation) => () => { throw new Error(`Isolated fixture blocks ${operation}`); };
+    const clone = (value) => value == null ? value : structuredClone(value);
+    const isNewInstall = new URLSearchParams(location.search).get('new') === '1';
+    const initialData = isNewInstall ? null : {
+      autoSync: false,
+      hasConsented: false,
+      contentMode: 'general',
+      knowledgeBaseName: '示例知识库',
+      folderName: '示例分享文件夹',
+      destinationPath: 'IMA Share Sync',
+      includeSubfolders: true,
+      maxItems: 7,
+      maxFolders: 2,
+      maxFolderDepth: 2,
+      syncReports: [],
+      syncedAttachments: [],
+      // Deliberately no generalSelectionMode: exercise the real legacy migration.
+    };
+    let savedData = clone(initialData);
+    let saveCount = 0;
+    let settingsTab;
+    let nextControlId = 0;
+    document.getElementById('fixture-scenario').textContent = `${isNewInstall ? '全新安装' : '旧版通用配置 · 每夹 7 个 / 2 个文件夹 / 2 层'} · 仅模拟数据，不连接仓库或 IMA，保存仅在内存中。`;
+    document.getElementById(isNewInstall ? 'new-link' : 'existing-link').setAttribute('aria-current', 'page');
+    document.getElementById('settings').addEventListener('submit', (event) => event.preventDefault());
+
+    HTMLElement.prototype.empty = function () { this.replaceChildren(); };
+    HTMLElement.prototype.setText = function (value) { this.textContent = value; };
+    HTMLElement.prototype.setAttr = function (key, value) { this.setAttribute(key, value); };
+    HTMLElement.prototype.toggleClass = function (key, value) { this.classList.toggle(key, value); };
+    HTMLElement.prototype.addClass = function (...names) { this.classList.add(...names); };
+    HTMLElement.prototype.removeClass = function (...names) { this.classList.remove(...names); };
+    HTMLElement.prototype.createEl = function (tag, options = {}) {
+      const element = document.createElement(tag);
+      if (typeof options === 'string') options = { cls: options };
+      if (options.text !== undefined) element.textContent = options.text;
+      if (options.cls) element.className = Array.isArray(options.cls) ? options.cls.join(' ') : options.cls;
+      for (const [key, value] of Object.entries(options.attr || {})) element.setAttribute(key, value);
+      this.append(element);
+      return element;
+    };
+    HTMLElement.prototype.createDiv = function (options) { return this.createEl('div', options); };
+    HTMLElement.prototype.createSpan = function (options) { return this.createEl('span', options); };
+
+    class Setting {
+      constructor(container) {
+        this.settingEl = container.createDiv({ cls: 'setting-item' });
+        this.infoEl = this.settingEl.createDiv({ cls: 'setting-item-info' });
+        this.nameEl = this.infoEl.createDiv({ cls: 'setting-item-name' });
+        this.descEl = this.infoEl.createDiv({ cls: 'setting-item-description' });
+        this.controlEl = this.settingEl.createDiv({ cls: 'setting-item-control' });
+        this.baseId = `fixture-setting-${++nextControlId}`;
+        this.nameEl.id = `${this.baseId}-name`;
+        this.descEl.id = `${this.baseId}-description`;
+      }
+      setName(value) { this.nameEl.textContent = value; return this; }
+      setDesc(value) { this.descEl.replaceChildren(value instanceof Node ? value : document.createTextNode(value)); return this; }
+      setHeading() {
+        const heading = document.createElement('h2');
+        heading.textContent = this.nameEl.textContent;
+        heading.id = this.nameEl.id;
+        heading.className = this.nameEl.className;
+        this.nameEl.replaceWith(heading);
+        this.nameEl = heading;
+        this.settingEl.classList.add('mod-heading');
+        return this;
+      }
+      bind(element) {
+        element.id = `${this.baseId}-control-${this.controlEl.children.length}`;
+        element.name = element.id;
+        element.setAttribute('aria-describedby', this.descEl.id);
+        if (element.tagName !== 'BUTTON') {
+          if (this.nameEl.tagName !== 'LABEL') {
+            const label = document.createElement('label');
+            label.id = this.nameEl.id;
+            label.className = this.nameEl.className;
+            label.textContent = this.nameEl.textContent;
+            this.nameEl.replaceWith(label);
+            this.nameEl = label;
+          }
+          this.nameEl.htmlFor = element.id;
+          element.setAttribute('aria-labelledby', this.nameEl.id);
+        }
+        return element;
+      }
+      addText(callback) {
+        const input = this.bind(this.controlEl.createEl('input', { attr: { type: 'text', autocomplete: 'off' } }));
+        const control = {
+          inputEl: input,
+          setPlaceholder(value) { input.placeholder = value; return this; },
+          setValue(value) { input.value = value; return this; },
+          setDisabled(value) { input.disabled = value; return this; },
+          onChange(handler) { input.addEventListener('input', () => invoke(handler, input.value)); return this; },
+        };
+        callback(control); return this;
+      }
+      addDropdown(callback) {
+        const select = this.bind(this.controlEl.createEl('select'));
+        const control = {
+          selectEl: select,
+          addOption(value, text) { select.add(new Option(text, value)); return this; },
+          setValue(value) { select.value = value; return this; },
+          setDisabled(value) { select.disabled = value; return this; },
+          onChange(handler) { select.addEventListener('change', () => invoke(handler, select.value)); return this; },
+        };
+        callback(control); return this;
+      }
+      addToggle(callback) {
+        const input = this.bind(this.controlEl.createEl('input', { attr: { type: 'checkbox' } }));
+        const control = {
+          toggleEl: input,
+          setValue(value) { input.checked = value; return this; },
+          setDisabled(value) { input.disabled = value; return this; },
+          onChange(handler) { input.addEventListener('change', () => invoke(handler, input.checked)); return this; },
+        };
+        callback(control); return this;
+      }
+      addSlider(callback) {
+        const input = this.bind(this.controlEl.createEl('input', { attr: { type: 'range' } }));
+        const control = {
+          sliderEl: input,
+          setLimits(min, max, step) { Object.assign(input, { min, max, step }); return this; },
+          setValue(value) { input.value = String(value); return this; },
+          setDisabled(value) { input.disabled = value; return this; },
+          setDynamicTooltip() { return this; },
+          onChange(handler) { input.addEventListener('input', () => invoke(handler, Number(input.value))); return this; },
+        };
+        callback(control); return this;
+      }
+      addButton(callback) {
+        const button = this.bind(this.controlEl.createEl('button', { attr: { type: 'button' } }));
+        const control = {
+          buttonEl: button,
+          setButtonText(value) { button.textContent = value; return this; },
+          setCta() { button.classList.add('mod-cta'); return this; },
+          setWarning() { button.classList.add('mod-warning'); return this; },
+          setDisabled(value) { button.disabled = value; return this; },
+          onClick(handler) { button.addEventListener('click', (event) => invoke(handler, event)); return this; },
+        };
+        callback(control); return this;
+      }
+    }
+    class Modal {
+      constructor(app) {
+        this.app = app;
+        this.modalEl = document.body.createEl('dialog');
+        this.titleEl = this.modalEl.createEl('h2');
+        this.titleEl.id = `fixture-dialog-${++nextControlId}`;
+        this.modalEl.setAttribute('aria-labelledby', this.titleEl.id);
+        this.contentEl = this.modalEl.createDiv();
+        this.modalEl.addEventListener('close', () => { this.onClose?.(); this.modalEl.remove(); });
+      }
+      open() { this.onOpen?.(); this.modalEl.showModal(); }
+      close() { this.modalEl.close(); }
+    }
+    class Notice {
+      constructor(message, duration = 5000) {
+        this.messageEl = document.getElementById('fixture-notices').createDiv({ cls: 'fixture-notice', text: message });
+        if (duration > 0) this.timer = setTimeout(() => this.hide(), duration);
+      }
+      hide() { clearTimeout(this.timer); this.messageEl.remove(); }
+    }
+    class PluginSettingTab {
+      constructor(app, plugin) { this.app = app; this.plugin = plugin; this.containerEl = document.getElementById('settings'); }
+    }
+    class Plugin {
+      constructor() {
+        this.manifest = { id: 'ima-speed-sync', version: '__PLUGIN_VERSION__' };
+        this.app = {
+          // A throwing proxy makes accidental vault access visible instead of silently succeeding.
+          vault: new Proxy({}, { get: (_target, name) => blocked(`vault.${String(name)}`) }),
+          workspace: { getLeavesOfType: () => [], onLayoutReady() {} },
+        };
+      }
+      async loadData() { return clone(initialData); }
+      async saveData(value) { savedData = clone(value); saveCount++; }
+      addSettingTab(tab) { settingsTab = tab; }
+      registerView() {}
+      addRibbonIcon() { return document.createElement('button'); }
+      addCommand() {}
+    }
+    const obsidian = {
+      Plugin, PluginSettingTab, Setting, Modal, Notice,
+      ItemView: class {}, TFile: class {}, TFolder: class {}, FileSystemAdapter: class {}, Menu: class {},
+      // Simulate Windows settings, but never execute its workspace-ready callback.
+      Platform: { isWin: true },
+      normalizePath: (value) => value.replaceAll('\\', '/'),
+      addIcon() {},
+      setIcon(element, name) {
+        if (name !== 'star') return;
+        const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        svg.setAttribute('viewBox', '0 0 24 24');
+        svg.setAttribute('fill', 'none');
+        svg.setAttribute('stroke', 'currentColor');
+        svg.setAttribute('stroke-width', '2');
+        svg.setAttribute('aria-hidden', 'true');
+        const star = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        star.setAttribute('d', 'm12 3 2.8 5.7 6.3.9-4.6 4.5 1.1 6.3L12 17.4l-5.6 3 1.1-6.3L3 9.6l6.2-.9Z');
+        svg.append(star); element.append(svg);
+      },
+    };
+    window.module = { exports: {} };
+    window.require = (name) => {
+      if (name === 'worker_threads') return { Worker: class { constructor() { throw new Error('PDF workers are disabled in this settings-only fixture.'); } } };
+      if (name === 'obsidian') return obsidian;
+      if (name === 'crypto') return { randomUUID: () => crypto.randomUUID(), createHash: blocked('crypto.createHash') };
+      if (name === 'child_process') return { spawn: blocked('child_process.spawn') };
+      if (name === 'fs/promises') return Object.fromEntries(['lstat', 'mkdir', 'mkdtemp', 'readFile', 'realpath', 'rm', 'writeFile', 'rename'].map((key) => [key, blocked(`fs.${key}`)]));
+      if (name === 'os') return { tmpdir: blocked('os.tmpdir') };
+      if (name === 'path') return { join: blocked('path.join'), resolve: blocked('path.resolve') };
+      throw new Error(`Unmocked fixture module: ${name}`);
+    };
+  </script>
+  <script src="/plugin.js"></script>
+  <script>
+    (async () => {
+      const PluginExport = module.exports.default || module.exports;
+      const plugin = new PluginExport();
+      await plugin.onload();
+      if (!settingsTab) throw new Error('The real plugin did not register a settings tab.');
+      settingsTab.display();
+      window.fixture = Object.freeze({
+        plugin,
+        tab: settingsTab,
+        get savedData() { return clone(savedData); },
+        get saveCount() { return saveCount; },
+        get errors() { return [...fixtureErrors]; },
+        isNewInstall,
+      });
+      document.documentElement.dataset.fixtureReady = 'true';
+    })().catch(reportError);
+  </script>
+</body>
+</html>

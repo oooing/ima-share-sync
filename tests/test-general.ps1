@@ -5,6 +5,8 @@ $source = [IO.File]::ReadAllText($sourcePath, [Text.Encoding]::UTF8)
 . ([scriptblock]::Create($source))
 Add-Type -AssemblyName UIAutomationClient
 Add-Type -AssemblyName UIAutomationTypes
+function Get-ImaRoot { throw 'OFFLINE TEST: desktop access is forbidden' }
+function Get-ImaWindowRoots { throw 'OFFLINE TEST: desktop access is forbidden' }
 function Write-SyncLog {}
 $script:Checks = 0
 function Check($Expected, $Actual, [string]$Name) {
@@ -186,11 +188,12 @@ Check $true (Test-ImaGeneralBottom ([pscustomobject]@{Scrollable=$true;ScrollPer
     $script:SkipSourceIds = @{ 'known-id' = $true }
     $script:openedRecords = @()
     $script:closedRecords = 0
-    function Get-ImaRecentArticleRecords {
+    function Get-ImaGeneralCandidates {
         return @(
-            [pscustomobject]@{ Name='同名文章'; Kind='note'; SourceId='known-id' },
-            [pscustomobject]@{ Name='同名文章'; Kind='note'; SourceId='new-id' },
-            [pscustomobject]@{ Name='附件.pdf'; Kind='pdf'; SourceId='pdf-id' }
+            [pscustomobject]@{ Name='同名文章'; Kind='note'; SourceId='known-id'; RelativeFolder=@() },
+            [pscustomobject]@{ Name='同名文章'; Kind='note'; SourceId='new-id'; RelativeFolder=@() },
+            [pscustomobject]@{ Name='分享网页'; Kind='weburl'; SourceId='web-id'; RelativeFolder=@() },
+            [pscustomobject]@{ Name='附件.pdf'; Kind='pdf'; SourceId='pdf-id'; RelativeFolder=@() }
         )
     }
     function Invoke-ImaArticleRecord { param($Record) $script:openedRecords += $Record.SourceId }
@@ -198,11 +201,11 @@ Check $true (Test-ImaGeneralBottom ([pscustomobject]@{Scrollable=$true;ScrollPer
     function Close-ImaCurrentArticle { $script:closedRecords++ }
     function Write-SyncLog {}
     $result = Invoke-ImaGeneralSync $null
-    Check 'new-id' ($script:openedRecords -join ',') 'known IDs and unsupported attachments are not opened'
-    Check 1 $result.items.Count 'same-name different source is retained'
+    Check 'new-id,web-id' ($script:openedRecords -join ',') 'notes and web articles use text extraction; known IDs skip'
+    Check 2 $result.items.Count 'same-name different source and web article are retained'
     Check 1 $result.skippedTitles.Count 'source ID skip is counted'
     Check 1 $result.errors.Count 'unsupported content is explicitly reported'
-    Check 1 $script:closedRecords 'each newly opened article is closed once'
+    Check 2 $script:closedRecords 'each newly opened article is closed once'
 }
 
 Write-Output "PASS: $script:Checks general-text and low-interference assertions (no real desktop operations)"

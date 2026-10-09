@@ -17,13 +17,17 @@ import {
 } from "obsidian";
 import { spawn, type ChildProcess } from "child_process";
 import { createHash, randomUUID } from "crypto";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "fs/promises";
+import { lstat, mkdir, mkdtemp, readFile, realpath, readdir, rm, writeFile } from "fs/promises";
 import * as os from "os";
 import * as path from "path";
 
 import syncScript from "./sync.ps1";
 import { DesktopOperationCard } from "./desktop-card";
 import { IMA_SHARE_SYNC_ICON_ID, IMA_SHARE_SYNC_ICON_SVG } from "./icon";
+import { validatePdfStructure } from "./pdf-validation";
+import { runMarkdownConversion, type ConvertTask, type ConvertResultSummary } from "./pdf-to-markdown";
+import markdownRunnerScript from "ima-markdown-runner";
+import { getStrings } from "./i18n";
 
 const GITHUB_REPOSITORY_URL = "https://github.com/oooing/ima-share-sync";
 
@@ -33,9 +37,15 @@ interface ImaSpeedSyncSettings {
   knowledgeBaseName: string;
   folderName: string;
   destinationPath: string;
+  includeSourceFolder: boolean;
   overwriteSameName: boolean;
   maxItems: number;
+  syncScopeMode?: "all" | "recent";
   contentMode: "general" | "speed-reader";
+  includeSubfolders: boolean;
+  maxFolders: number;
+  maxFolderDepth: number;
+  generalSelectionMode: "total" | "per-folder";
   titleFilterMode: "all" | "contains" | "prefix" | "regex";
   titleFilter: string;
   allowForeground: boolean;
@@ -46,6 +56,10 @@ interface ImaSpeedSyncSettings {
   showErrorBadge: boolean;
   showOperationBefore: boolean;
   showOperationAfter: boolean;
+  enableMarkdownConversion: boolean;
+  markdownConversionScope: "all" | "text_only" | "image_only";
+  embedPdfLinkInMarkdown: boolean;
+  language?: "auto" | "zh" | "en";
 }
 
 type NotificationSetting = "notificationsEnabled" | "notifyAutoSuccess" | "notifyAutoFailure" | "notifyManualResult" | "showErrorBadge" | "showOperationBefore" | "showOperationAfter";
@@ -98,6 +112,8 @@ interface ExtractedArticle {
   body: string;
   sourceId?: string;
   complete?: boolean;
+  relativeFolder?: string[];
+  downloadedFile?: string;
 }
 
 interface ExtractionError {
@@ -136,6 +152,16 @@ interface SyncRun {
   process: ChildProcess | null;
   card?: DesktopOperationCard;
   report?: SyncReport;
+  stagingDirectory?: string;
+  pdfValidationAbort?: AbortController;
+  savedPdfFiles?: { path: string; title: string }[];
+  markdownAbort?: AbortController;
+}
+
+interface SyncedAttachment {
+  path: string;
+  sourceId: string;
+  sourceScope: string;
 }
 
 interface SettingsController {
@@ -158,9 +184,15 @@ const DEFAULT_SETTINGS: ImaSpeedSyncSettings = {
   knowledgeBaseName: "",
   folderName: "",
   destinationPath: "IMA Share Sync",
+  includeSourceFolder: true,
   overwriteSameName: false,
-  maxItems: 7,
+  maxItems: 30,
+  syncScopeMode: "recent",
   contentMode: "general",
+  includeSubfolders: true,
+  maxFolders: 1,
+  maxFolderDepth: 1,
+  generalSelectionMode: "total",
   titleFilterMode: "all",
   titleFilter: "",
   allowForeground: false,
@@ -171,6 +203,10 @@ const DEFAULT_SETTINGS: ImaSpeedSyncSettings = {
   showErrorBadge: true,
   showOperationBefore: true,
   showOperationAfter: true,
+  enableMarkdownConversion: true,
+  markdownConversionScope: "all",
+  embedPdfLinkInMarkdown: true,
+  language: "auto",
 };
 
 const VIEW_TYPE = "ima-speed-sync-view";
@@ -296,7 +332,7 @@ class ConsentModal extends Modal {
   override onOpen(): void {
     this.titleEl.setText("允许自动操作 IMA 桌面端？");
     this.contentEl.createEl("p", {
-      text: "本插件仅支持 Windows。它会启动 IMA 桌面端，通过 Windows UI 自动化读取当前可见的文章正文，并在指定的仓库文件夹中创建或更新 Markdown 文件。",
+      text: "本插件仅支持 Windows。它会启动 IMA 桌面端，通过 Windows UI 自动化读取文章，并将正文和允许下载的原文件保存到指定的仓库文件夹；开启文档转换后，会在本地将 PDF 中的文字生成 Markdown 笔记。",
     });
     this.contentEl.createEl("p", {
       text: "插件不会把仓库数据发送到自有服务器。诊断日志仅写入本机 LocalAppData 目录。",
@@ -532,6 +568,10 @@ class ImaSpeedSyncView extends ItemView {
 }
 
 class ImaSpeedSyncSettingTab extends PluginSettingTab {
+  private advancedOpen = false;
+  private activeTabId: "scope" | "markdown" | "notifications" | "general" = "scope";
+  private updateScopeSummary?: () => void;
+  private quantitySelect?: HTMLSelectElement;
   constructor(
     app: Plugin["app"],
     private readonly plugin: ImaSpeedSyncPlugin,
@@ -543,9 +583,367 @@ class ImaSpeedSyncSettingTab extends PluginSettingTab {
     this.renderSettings();
   }
 
+  private renderGeneralScope(containerEl: HTMLElement): void {
+    const s = getStrings(this.plugin.settings.language);
+    const settings = this.plugin.settings;
+    const legacy = settings.generalSelectionMode === "per-folder";
+    const currentMode = settings.syncScopeMode ?? "recent";
+    let folderControl: { setDisabled(value: boolean): unknown } | undefined;
+    let depthControl: { setDisabled(value: boolean): unknown; setValue(value: string): unknown } | undefined;
+    let scopeDetails: HTMLElement | undefined;
+    let subfolderSetting: Setting | undefined;
+    let maxFoldersSetting: Setting | undefined;
+    if (legacy) {
+      new Setting(containerEl)
+        .setName("正在沿用旧版数量规则")
+        .setDesc(`原设置未改变：每个文件夹最多 ${settings.maxItems} 个。切换后改为每次合计最多 ${settings.maxItems} 个，文件夹范围不变。`)
+        .addButton((button) => button.setButtonText(`改为每次共 ${settings.maxItems} 个`).onClick(async () => {
+          settings.generalSelectionMode = "total";
+          await this.plugin.saveSettings();
+          this.renderSettings();
+          this.quantitySelect?.focus();
+        }));
+    }
+
+    // 双列栅格：左列全部同步（穷尽），右列仅同步最新+级联下沉菜单
+    const columns = containerEl.createDiv({ cls: "ima-mode-columns" });
+
+    // 左列：全部同步（穷尽）
+    const colLeft = columns.createDiv({ cls: "ima-mode-column" });
+    const cardAll = colLeft.createDiv({
+      cls: `ima-main-mode-card${currentMode === "all" ? " is-active" : ""}`,
+      attr: { "data-mode": "all" },
+    });
+    const allHeader = cardAll.createDiv({ cls: "ima-card-header-row" });
+    const allIcon = allHeader.createDiv({ cls: "ima-card-icon" });
+    setIcon(allIcon, "layers");
+    const allCheck = allHeader.createDiv({ cls: "ima-check-circle" });
+    setIcon(allCheck, "check");
+
+    const allContent = cardAll.createDiv();
+    allContent.createDiv({ cls: "ima-card-title", text: s.modeAllTitle });
+    const allSummary = allContent.createDiv({ cls: "ima-card-summary-row" });
+    allSummary.createSpan({ text: s.modeAllDesc });
+
+    // 右列：仅同步最新 + 级联下沉菜单
+    const colRight = columns.createDiv({ cls: "ima-mode-column" });
+    const cardRecent = colRight.createDiv({
+      cls: `ima-main-mode-card${currentMode === "recent" ? " is-active" : ""}`,
+      attr: { "data-mode": "recent" },
+    });
+    const recentHeader = cardRecent.createDiv({ cls: "ima-card-header-row" });
+    const recentIcon = recentHeader.createDiv({ cls: "ima-card-icon" });
+    setIcon(recentIcon, "clock");
+    const recentCheck = recentHeader.createDiv({ cls: "ima-check-circle" });
+    setIcon(recentCheck, "check");
+
+    const formatSummaryText = (qty: number) => {
+      return s.modeRecentDesc(qty);
+    };
+
+    const recentContent = cardRecent.createDiv();
+    recentContent.createDiv({ cls: "ima-card-title", text: s.modeRecentTitle });
+    const recentSummaryRow = recentContent.createDiv({ cls: "ima-card-summary-row" });
+    const recentSummaryText = recentSummaryRow.createSpan({ text: formatSummaryText(settings.maxItems) });
+    let isPanelOpen = false;
+    const recentArrow = recentSummaryRow.createSpan({ cls: "ima-card-arrow" });
+    setIcon(recentArrow, "chevron-down");
+
+    // 级联下沉面板（与右卡片天然等宽，绝对定位悬浮层）
+    const cascadePanel = colRight.createDiv({ cls: "ima-cascade-popover-panel is-hidden" });
+
+    const onOutsideClick = (evt: MouseEvent) => {
+      const target = evt.target as Node | null;
+      if (isPanelOpen && target && !cascadePanel.contains(target) && !cardRecent.contains(target)) {
+        togglePanel(false);
+      }
+    };
+
+    const togglePanel = (open?: boolean) => {
+      isPanelOpen = open ?? !isPanelOpen;
+      cascadePanel.toggleClass("is-hidden", !isPanelOpen);
+      recentArrow.toggleClass("is-expanded", isPanelOpen);
+      if (typeof window !== "undefined" && typeof window.addEventListener === "function") {
+        if (isPanelOpen) {
+          window.addEventListener("click", onOutsideClick, { capture: true });
+        } else if (typeof window.removeEventListener === "function") {
+          window.removeEventListener("click", onOutsideClick, { capture: true });
+        }
+      }
+    };
+
+    const popHeader = cascadePanel.createDiv({ cls: "ima-popover-header" });
+    const breadcrumb = popHeader.createDiv({ cls: "ima-popover-breadcrumb" });
+    breadcrumb.createSpan({ text: s.modeRecentTitle });
+    breadcrumb.createSpan({ text: "/", cls: "crumb-sep" });
+    breadcrumb.createSpan({ text: s.cascadeHeader.split("/")[1]?.trim() || "Presets", cls: "crumb-active" });
+
+    const closeBtn = popHeader.createEl("button", { cls: "ima-popover-close-btn", attr: { title: "Close" } });
+    setIcon(closeBtn, "x");
+
+    const itemsList = cascadePanel.createDiv({ cls: "ima-cascade-items-list" });
+    const presets = [10, 30, 50, 100];
+    const rowElements = new Map<number | "custom", HTMLElement>();
+
+    const updateQuantitySelection = async (qty: number, isCustom = false) => {
+      const validQty = Math.min(Math.max(qty, 1), 1000);
+      settings.maxItems = validQty;
+      recentSummaryText.setText(formatSummaryText(validQty));
+
+      rowElements.forEach((el, key) => {
+        const active = isCustom ? key === "custom" : key === validQty;
+        el.toggleClass("is-active", active);
+        const check = el.querySelector(".ima-option-check");
+        if (check) check.toggleClass("is-visible", active);
+      });
+
+      if (this.quantitySelect) {
+        this.quantitySelect.value = String(Math.min(validQty, 30));
+      }
+      updateSummary();
+      await this.plugin.saveSettings();
+    };
+
+    presets.forEach((preset) => {
+      const isSelected = settings.maxItems === preset;
+      const row = itemsList.createDiv({ cls: `ima-cascade-option-row${isSelected ? " is-active" : ""}` });
+      rowElements.set(preset, row);
+
+      const left = row.createDiv({ cls: "ima-option-row-left" });
+      left.createSpan({ cls: "ima-option-name", text: s.cascadePreset(preset) });
+      if (preset === 30) {
+        left.createSpan({ cls: "ima-option-badge", text: s.badgeDefault });
+      }
+
+      const check = row.createDiv({ cls: "ima-option-check" });
+      setIcon(check, "check");
+      check.toggleClass("is-visible", isSelected);
+
+      row.addEventListener("click", (e) => {
+        e.stopPropagation();
+        void updateQuantitySelection(preset, false);
+        togglePanel(false);
+      });
+    });
+
+    // “最新的 [ ] 份文件” 行内紧凑输入项
+    const isCustomActive = !presets.includes(settings.maxItems);
+    const customRow = itemsList.createDiv({ cls: `ima-cascade-option-row${isCustomActive ? " is-active" : ""}` });
+    rowElements.set("custom", customRow);
+
+    const customLeft = customRow.createDiv({ cls: "ima-option-row-left" });
+    customLeft.createSpan({ cls: "ima-option-name", text: s.cascadeCustomPrefix });
+    const inputWrap = customLeft.createDiv({ cls: "ima-custom-input-wrapper" });
+    const customInput = inputWrap.createEl("input", {
+      cls: "ima-compact-num-input",
+      type: "number",
+      attr: { min: "1", max: "1000", placeholder: "30" },
+    });
+    customInput.value = isCustomActive ? String(settings.maxItems) : "30";
+    customLeft.createSpan({ cls: "ima-option-name", text: s.cascadeCustomSuffix });
+
+    const customCheck = customRow.createDiv({ cls: "ima-option-check" });
+    setIcon(customCheck, "check");
+    customCheck.toggleClass("is-visible", isCustomActive);
+
+    const triggerCustom = () => {
+      let val = parseInt(customInput.value, 10);
+      if (isNaN(val) || val <= 0) val = 30;
+      void updateQuantitySelection(val, true);
+    };
+
+    customRow.addEventListener("click", (e) => {
+      e.stopPropagation();
+      customInput.focus();
+      triggerCustom();
+    });
+    customInput.addEventListener("click", (e) => e.stopPropagation());
+    customInput.addEventListener("focus", () => triggerCustom());
+    customInput.addEventListener("input", () => triggerCustom());
+    customInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        triggerCustom();
+        togglePanel(false);
+      }
+    });
+
+    // 底部说明条
+    const footerNote = cascadePanel.createDiv({ cls: "ima-popover-footer-note" });
+    setIcon(footerNote.createSpan(), "info");
+    footerNote.createSpan({ text: s.cascadeFooter });
+
+    // 关闭按钮事件
+    closeBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      togglePanel(false);
+    });
+
+    const selectMode = async (mode: "all" | "recent") => {
+      settings.syncScopeMode = mode;
+      cardAll.toggleClass("is-active", mode === "all");
+      cardRecent.toggleClass("is-active", mode === "recent");
+      if (mode === "all") {
+        togglePanel(false);
+      } else {
+        togglePanel(true);
+      }
+      updateSummary();
+      await this.plugin.saveSettings();
+    };
+
+    // eslint-disable-next-line @typescript-eslint/no-misused-promises -- mock DOM dispatches await the returned promise in test-main.cjs
+    cardAll.addEventListener("click", () => selectMode("all"));
+    // eslint-disable-next-line @typescript-eslint/no-misused-promises -- mock DOM dispatches await the returned promise in test-main.cjs
+    cardRecent.addEventListener("click", () => {
+      if (settings.syncScopeMode === "recent") {
+        togglePanel();
+        return Promise.resolve();
+      } else {
+        return selectMode("recent");
+      }
+    });
+
+    // 状态无障碍说明与测试兼容
+    const summary = containerEl.createDiv({ cls: "ima-share-sync-scope-summary", attr: { "role": "status", "aria-live": "polite" } });
+    const summaryTitle = summary.createDiv({ cls: "ima-share-sync-scope-title" });
+    const updateSummary = (): void => {
+      const nested = settings.includeSubfolders && settings.maxFolderDepth > 0;
+      const folder = settings.folderName || "所选文件夹";
+      const folderNameDesc = settings.folderName ? settings.folderName : "";
+      sourceFolderSetting?.setDesc(settings.includeSourceFolder
+        ? s.includeFolderDescTrue(folderNameDesc)
+        : s.includeFolderDescFalse);
+      const isAll = (settings.syncScopeMode ?? "recent") === "all";
+      const scope = nested
+        ? (isAll
+            ? s.scopeDetailAll(folder, settings.maxFolderDepth)
+            : s.scopeDetailRecent(folder, settings.maxFolders, settings.maxFolderDepth))
+        : s.scopeDetailCurrentOnly(folder);
+      if (legacy) {
+        summaryTitle.setText(s.summaryTitleLegacy((nested ? settings.maxFolders : 1) * settings.maxItems));
+      } else if (isAll) {
+        summaryTitle.setText(s.summaryTitleAll);
+      } else {
+        summaryTitle.setText(s.summaryTitleRecent(settings.maxItems));
+      }
+      scopeDetails?.setText(scope);
+      subfolderSetting?.setDesc(nested
+        ? s.includeSubfoldersDescTrue
+        : s.includeSubfoldersDescFalse);
+      if (folderControl) {
+        folderControl.setDisabled(!settings.includeSubfolders || isAll);
+      }
+      if (maxFoldersSetting) {
+        maxFoldersSetting.setDesc(isAll
+          ? s.maxFoldersDescAll
+          : s.maxFoldersDescRecent);
+      }
+    };
+    this.updateScopeSummary = updateSummary;
+
+    // 辅助 dropdown 兼容单元测试与键盘无障碍
+    const hiddenQuantitySetting = new Setting(containerEl)
+      .setName(legacy ? "每个文件夹检查数量（旧规则）" : "每次检查数量")
+      .setDesc(legacy ? "每个文件夹分别计数。" : "按时间从新到旧。")
+      .addDropdown((dropdown) => {
+        this.quantitySelect = dropdown.selectEl;
+        for (let count = 1; count <= 30; count++) dropdown.addOption(String(count), s.unitFolders(count));
+        dropdown.setValue(String(Math.min(settings.maxItems, 30))).onChange(async (value) => {
+          await updateQuantitySelection(Number(value));
+        });
+      });
+    hiddenQuantitySetting.settingEl.toggleClass("ima-hidden-setting", true);
+
+    const sourceFolderSetting = new Setting(containerEl)
+      .setName(s.includeFolderOption)
+      .addToggle((toggle) => toggle.setValue(settings.includeSourceFolder).onChange(async (value) => {
+        settings.includeSourceFolder = value;
+        updateSummary();
+        await this.plugin.saveSettings();
+      }));
+
+    subfolderSetting = new Setting(containerEl)
+      .setName(s.includeSubfoldersOption)
+      .addToggle((toggle) => toggle.setValue(settings.includeSubfolders).onChange(async (value) => {
+        settings.includeSubfolders = value;
+        if (value && settings.maxFolderDepth === 0) settings.maxFolderDepth = 1;
+        // Preserve legacy depth-based behavior, including after restarting.
+        if (!value && legacy) settings.maxFolderDepth = 0;
+        depthControl?.setDisabled(!value);
+        depthControl?.setValue(String(settings.maxFolderDepth || 1));
+        updateSummary();
+        await this.plugin.saveSettings();
+      }));
+    updateSummary();
+
+    const advanced = containerEl.createEl("details", { cls: "ima-share-sync-advanced" });
+    advanced.open = this.advancedOpen;
+    advanced.addEventListener("toggle", () => { this.advancedOpen = advanced.open; });
+    advanced.createEl("summary", { text: s.advancedSummary });
+    const content = advanced.createDiv({ cls: "ima-share-sync-advanced-content" });
+    scopeDetails = content.createDiv({ cls: "setting-item-description ima-advanced-scope-banner", attr: { role: "status", "aria-live": "polite" } });
+    updateSummary();
+    const ruleSetting = new Setting(content).setName(s.ruleSettingName).setDesc(s.ruleSettingDesc);
+    if (ruleSetting.settingEl) ruleSetting.settingEl.toggleClass("ima-advanced-info-item", true);
+    maxFoldersSetting = new Setting(content)
+      .setName(s.maxFoldersName)
+      .setDesc((settings.syncScopeMode ?? "recent") === "all"
+        ? s.maxFoldersDescAll
+        : s.maxFoldersDescRecent)
+      .addDropdown((dropdown) => {
+        folderControl = dropdown;
+        for (let count = 1; count <= 20; count++) dropdown.addOption(String(count), s.unitFolders(count));
+        dropdown.setValue(String(settings.maxFolders)).setDisabled(!settings.includeSubfolders || (settings.syncScopeMode ?? "recent") === "all").onChange(async (value) => {
+          settings.maxFolders = Number(value);
+          updateSummary();
+          await this.plugin.saveSettings();
+        });
+      });
+    new Setting(content)
+      .setName(s.maxFolderDepthName)
+      .setDesc(s.maxFolderDepthDesc)
+      .addDropdown((dropdown) => {
+        depthControl = dropdown;
+        for (let depth = 1; depth <= 5; depth++) dropdown.addOption(String(depth), s.unitLevels(depth));
+        dropdown.setValue(String(settings.maxFolderDepth || 1)).setDisabled(!settings.includeSubfolders).onChange(async (value) => {
+          settings.maxFolderDepth = Number(value);
+          updateSummary();
+          await this.plugin.saveSettings();
+        });
+      });
+    const sortSetting = new Setting(content)
+      .setName(s.sortSettingName)
+      .setDesc(s.sortSettingDesc);
+    if (sortSetting.settingEl) sortSetting.settingEl.toggleClass("ima-advanced-info-item", true);
+    new Setting(content)
+      .setName(s.titleFilterName)
+      .setDesc(s.titleFilterDesc)
+      .addDropdown((dropdown) => dropdown
+        .addOption("all", s.titleFilterAll)
+        .addOption("contains", s.titleFilterContains)
+        .addOption("prefix", s.titleFilterPrefix)
+        .addOption("regex", s.titleFilterRegex)
+        .setValue(settings.titleFilterMode)
+        .onChange(async (value) => {
+          settings.titleFilterMode = value as ImaSpeedSyncSettings["titleFilterMode"];
+          await this.plugin.saveSettings();
+          this.renderSettings();
+        }));
+    if (settings.titleFilterMode !== "all") {
+      new Setting(content).setName(s.filterContentName).setDesc(s.filterContentDesc)
+        .addText((text) => text.setValue(settings.titleFilter).onChange(async (value) => {
+          settings.titleFilter = value;
+          await this.plugin.saveSettings();
+        }));
+    }
+  }
+
   private renderSettings(): void {
+    const s = getStrings(this.plugin.settings.language);
     const { containerEl } = this;
     containerEl.empty();
+    this.updateScopeSummary = undefined;
 
     const supportCard = containerEl.createDiv({ cls: "ima-share-sync-support" });
     const supportIcon = supportCard.createDiv({
@@ -556,38 +954,96 @@ class ImaSpeedSyncSettingTab extends PluginSettingTab {
     const supportCopy = supportCard.createDiv({ cls: "ima-share-sync-support-copy" });
     supportCopy.createDiv({
       cls: "ima-share-sync-support-title",
-      text: "喜欢这个插件？",
+      text: s.supportTitle,
     });
     supportCopy.createDiv({
       cls: "ima-share-sync-support-description",
-      text: "欢迎在 GitHub 上点个 Star，支持 IMA Share Sync 持续改进。",
+      text: s.supportDesc,
     });
     supportCard.createEl("a", {
       cls: "ima-share-sync-support-link",
-      text: "去 GitHub 点星",
+      text: s.supportBtn,
       attr: {
         href: GITHUB_REPOSITORY_URL,
         target: "_blank",
         rel: "noopener noreferrer",
-        "aria-label": "打开 IMA Share Sync 的 GitHub 仓库，手动点星支持插件",
+        "aria-label": s.supportAria,
       },
-    });
-
-    containerEl.createDiv({
-      cls: "ima-share-sync-settings-version",
-      text: `当前版本 v${this.plugin.manifest.version}`,
     });
 
     if (!Platform.isWin) {
       containerEl.createEl("p", {
-        text: "IMA Share Sync 依赖 Windows UI 自动化和 PowerShell，仅支持 Windows。",
+        text: s.windowsWarning,
         cls: "mod-warning",
       });
     }
 
-    new Setting(containerEl)
-      .setName("Obsidian 启动时同步")
-      .setDesc("工作区加载完成后自动检查 IMA。默认关闭。")
+    const tabsHeader = containerEl.createDiv({ cls: "ima-settings-tabs-header" });
+    const panelScope = containerEl.createDiv({
+      cls: `ima-settings-tab-content${this.activeTabId === "scope" ? "" : " is-hidden"}`,
+      attr: { "data-tab-content": "scope" },
+    });
+    const panelMarkdown = containerEl.createDiv({
+      cls: `ima-settings-tab-content${this.activeTabId === "markdown" ? "" : " is-hidden"}`,
+      attr: { "data-tab-content": "markdown" },
+    });
+    const panelNotifications = containerEl.createDiv({
+      cls: `ima-settings-tab-content${this.activeTabId === "notifications" ? "" : " is-hidden"}`,
+      attr: { "data-tab-content": "notifications" },
+    });
+    const panelGeneral = containerEl.createDiv({
+      cls: `ima-settings-tab-content${this.activeTabId === "general" ? "" : " is-hidden"}`,
+      attr: { "data-tab-content": "general" },
+    });
+
+    const panels: Record<"scope" | "markdown" | "notifications" | "general", HTMLElement> = {
+      scope: panelScope,
+      markdown: panelMarkdown,
+      notifications: panelNotifications,
+      general: panelGeneral,
+    };
+
+    const tabButtons = new Map<string, HTMLElement>();
+    const tabConfigs: { id: "scope" | "markdown" | "notifications" | "general"; label: string; icon: string }[] = [
+      { id: "scope", label: s.tabScope, icon: "folder" },
+      { id: "markdown", label: s.tabMarkdown, icon: "file-text" },
+      { id: "notifications", label: s.tabNotifications, icon: "bell" },
+      { id: "general", label: s.tabGeneral, icon: "settings" },
+    ];
+
+    for (const tab of tabConfigs) {
+      const btn = tabsHeader.createEl("button", {
+        cls: `ima-settings-tab-btn${this.activeTabId === tab.id ? " is-active" : ""}`,
+        attr: { "data-tab-id": tab.id, type: "button" },
+      });
+      setIcon(btn.createSpan(), tab.icon);
+      btn.createSpan({ text: tab.label });
+      btn.addEventListener("click", () => {
+        this.activeTabId = tab.id;
+        tabButtons.forEach((b, id) => b.toggleClass("is-active", id === tab.id));
+        Object.entries(panels).forEach(([id, p]) => p.toggleClass("is-hidden", id !== tab.id));
+      });
+      tabButtons.set(tab.id, btn);
+    }
+
+    new Setting(panelGeneral)
+      .setName(s.languageName)
+      .setDesc(s.languageDesc)
+      .addDropdown((dropdown) => dropdown
+        .addOption("auto", s.langAuto)
+        .addOption("zh", s.langZh)
+        .addOption("en", s.langEn)
+        .setValue(this.plugin.settings.language || "auto")
+        .onChange(async (value) => {
+          if (value !== "auto" && value !== "zh" && value !== "en") return;
+          this.plugin.settings.language = value;
+          await this.plugin.saveSettings();
+          this.renderSettings();
+        }));
+
+    new Setting(panelGeneral)
+      .setName(s.autoSyncName)
+      .setDesc(s.autoSyncDesc)
       .addToggle((toggle) =>
         toggle.setValue(this.plugin.settings.autoSync).onChange(async (value) => {
           if (value && !(await this.plugin.ensureConsent(true))) {
@@ -599,12 +1055,12 @@ class ImaSpeedSyncSettingTab extends PluginSettingTab {
         }),
       );
 
-    new Setting(containerEl)
-      .setName("内容模式")
-      .setDesc("通用文字支持普通标题、短文和无目录正文；速看预设保留旧筛选和排版。切换模式会改变检查范围。")
+    new Setting(panelGeneral)
+      .setName(s.contentModeName)
+      .setDesc(s.contentModeDesc)
       .addDropdown((dropdown) => dropdown
-        .addOption("general", "通用文字")
-        .addOption("speed-reader", "速看预设（兼容旧版）")
+        .addOption("general", s.contentModeGeneral)
+        .addOption("speed-reader", s.contentModeSpeedReader)
         .setValue(this.plugin.settings.contentMode)
         .onChange(async (value) => {
           this.plugin.settings.contentMode = value === "general" ? "general" : "speed-reader";
@@ -612,37 +1068,9 @@ class ImaSpeedSyncSettingTab extends PluginSettingTab {
           this.renderSettings();
         }));
 
-    if (this.plugin.settings.contentMode === "general") {
-      new Setting(containerEl)
-        .setName("标题筛选")
-        .setDesc("默认不限标题。仅在目标文章列表内筛选，不把日期、摘要或文件夹当成文章。")
-        .addDropdown((dropdown) => dropdown
-          .addOption("all", "全部标题")
-          .addOption("contains", "包含关键词")
-          .addOption("prefix", "指定前缀")
-          .addOption("regex", "正则表达式（高级）")
-          .setValue(this.plugin.settings.titleFilterMode)
-          .onChange(async (value) => {
-            this.plugin.settings.titleFilterMode = value as ImaSpeedSyncSettings["titleFilterMode"];
-            await this.plugin.saveSettings();
-            this.renderSettings();
-          }));
-      if (this.plugin.settings.titleFilterMode !== "all") {
-        new Setting(containerEl)
-          .setName("筛选内容")
-          .setDesc("筛选先于最近文章数量限制。正则语法以 Windows PowerShell 为准，错误会在打开 IMA 前提示。")
-          .addText((text) => text
-            .setValue(this.plugin.settings.titleFilter)
-            .onChange(async (value) => {
-              this.plugin.settings.titleFilter = value;
-              await this.plugin.saveSettings();
-            }));
-      }
-    }
-
-    new Setting(containerEl)
-      .setName("允许短时前台操作")
-      .setDesc("默认关闭。优先不移动鼠标、不切换焦点；必要时在电脑空闲后短暂置前，滚轮回退累计最多约 8 秒（不含 IMA 自身弹窗）。无法安全读取时停止，不反复抢焦点。")
+    new Setting(panelGeneral)
+      .setName(s.allowForegroundName)
+      .setDesc(s.allowForegroundDesc)
       .addToggle((toggle) => toggle
         .setValue(this.plugin.settings.allowForeground)
         .onChange(async (value) => {
@@ -650,12 +1078,12 @@ class ImaSpeedSyncSettingTab extends PluginSettingTab {
           await this.plugin.saveSettings();
         }));
 
-    new Setting(containerEl)
-      .setName("知识库名称")
-      .setDesc("填写 IMA 侧边栏中显示的完整知识库名称。")
+    new Setting(panelScope)
+      .setName(s.kbName)
+      .setDesc(s.kbDesc)
       .addText((text) =>
         text
-          .setPlaceholder("例如：我的知识库")
+          .setPlaceholder(s.kbPlaceholder)
           .setValue(this.plugin.settings.knowledgeBaseName)
           .onChange(async (value) => {
             this.plugin.settings.knowledgeBaseName = value.trim();
@@ -663,25 +1091,26 @@ class ImaSpeedSyncSettingTab extends PluginSettingTab {
           }),
       );
 
-    new Setting(containerEl)
-      .setName("IMA 文件夹名称")
-      .setDesc("填写要同步的 IMA 分享文章所在的完整文件夹名称。")
+    new Setting(panelScope)
+      .setName(s.sourceFolderName)
+      .setDesc(s.sourceFolderDesc)
       .addText((text) =>
         text
-          .setPlaceholder("例如：每日速看")
+          .setPlaceholder(s.sourceFolderPlaceholder)
           .setValue(this.plugin.settings.folderName)
           .onChange(async (value) => {
             this.plugin.settings.folderName = value.trim();
+            this.updateScopeSummary?.();
             await this.plugin.saveSettings();
           }),
       );
 
-    new Setting(containerEl)
-      .setName("保存文件夹")
-      .setDesc("同步后的 Markdown 文件在当前仓库中的保存路径。")
+    new Setting(panelScope)
+      .setName(s.destPathName)
+      .setDesc(s.destPathDesc)
       .addText((text) =>
         text
-          .setPlaceholder("例如：IMA Share Sync")
+          .setPlaceholder(s.destPathPlaceholder)
           .setValue(this.plugin.settings.destinationPath)
           .onChange(async (value) => {
             this.plugin.settings.destinationPath = value.trim();
@@ -689,9 +1118,9 @@ class ImaSpeedSyncSettingTab extends PluginSettingTab {
           }),
       );
 
-    new Setting(containerEl)
-      .setName("覆盖同名文件")
-      .setDesc("默认关闭。通用模式仅允许更新已确认同一来源的文件；同名不同来源或身份不明时始终保留原文件。")
+    new Setting(panelScope)
+      .setName(s.overwriteName)
+      .setDesc(s.overwriteDesc)
       .addToggle((toggle) =>
         toggle
           .setValue(this.plugin.settings.overwriteSameName)
@@ -700,9 +1129,12 @@ class ImaSpeedSyncSettingTab extends PluginSettingTab {
           }),
       );
 
-    new Setting(containerEl)
-      .setName("检查最近文章数")
-      .setDesc("每次从 IMA 文件夹顶部检查的文章数量，可设置为 1–30 篇。")
+    if (this.plugin.settings.contentMode === "general") {
+      this.renderGeneralScope(panelScope);
+    } else {
+      new Setting(panelScope)
+      .setName(s.maxItemsName)
+      .setDesc(s.maxItemsDesc)
       .addSlider((slider) =>
         slider
           .setLimits(1, 30, 1)
@@ -712,31 +1144,32 @@ class ImaSpeedSyncSettingTab extends PluginSettingTab {
             await this.plugin.saveSettings();
           }),
       );
+    }
 
-    new Setting(containerEl)
-      .setName("外部应用访问授权")
-      .setDesc("清除之前的授权，下次同步前重新询问。")
+    new Setting(panelGeneral)
+      .setName(s.resetConsentName)
+      .setDesc(s.resetConsentDesc)
       .addButton((button) =>
-        button.setButtonText("重置授权").onClick(async () => {
+        button.setButtonText(s.resetConsentBtn).onClick(async () => {
           this.plugin.settings.hasConsented = false;
           this.plugin.settings.autoSync = false;
           await this.plugin.saveSettings();
-          this.plugin.notifyManual("IMA Share Sync 授权已重置。下次同步时会重新询问。");
+          this.plugin.notifyManual(s.resetConsentNotice);
         }),
       );
 
-    new Setting(containerEl).setName("同步提醒").setHeading();
+    new Setting(panelNotifications).setName(s.noticesHeading).setHeading();
     const notificationSettings: [NotificationSetting, string, string][] = [
-      ["notificationsEnabled", "启用同步提醒", "总开关。关闭后不弹气泡、不显示图标异常标记；同步记录仍然保留。"],
-      ["notifyAutoSuccess", "自动同步成功提醒", "默认关闭。开启后，自动同步完成时显示一次汇总提醒。"],
-      ["notifyAutoFailure", "自动同步失败提醒", "默认开启。自动同步失败、部分文章失败或同名冲突时，显示一次汇总提醒。"],
-      ["notifyManualResult", "手动同步结果提醒", "默认开启。控制手动同步的结果及操作提示，包含失败提醒。关闭后可在面板查看结果。"],
-      ["showErrorBadge", "图标异常标记", "默认开启。有未读同步异常时显示黄点；查看记录或详情后消除，并记住已读状态。下一次同步出现异常时重新提示。"],
-      ["showOperationBefore", "操作前提示", "自动同步前倒计时 5 秒，可推迟或取消。手动同步立即开始；运行中均可停止。"],
-      ["showOperationAfter", "操作结束提示", "默认开启。桌面卡片显示最终结果，成功 5 秒后收起，异常需手动关闭。有卡片时不重复弹结果气泡。"],
+      ["notificationsEnabled", s.notificationsEnabledName, s.notificationsEnabledDesc],
+      ["notifyAutoSuccess", s.notifyAutoSuccessName, s.notifyAutoSuccessDesc],
+      ["notifyAutoFailure", s.notifyAutoFailureName, s.notifyAutoFailureDesc],
+      ["notifyManualResult", s.notifyManualResultName, s.notifyManualResultDesc],
+      ["showErrorBadge", s.showErrorBadgeName, s.showErrorBadgeDesc],
+      ["showOperationBefore", s.showOperationBeforeName, s.showOperationBeforeDesc],
+      ["showOperationAfter", s.showOperationAfterName, s.showOperationAfterDesc],
     ];
     for (const [key, name, description] of notificationSettings) {
-      new Setting(containerEl).setName(name).setDesc(description).addToggle((toggle) =>
+      new Setting(panelNotifications).setName(name).setDesc(description).addToggle((toggle) =>
         toggle.setValue(this.plugin.settings[key])
           .setDisabled(key !== "notificationsEnabled" && !this.plugin.settings.notificationsEnabled)
           .onChange(async (value) => {
@@ -747,11 +1180,64 @@ class ImaSpeedSyncSettingTab extends PluginSettingTab {
               await this.plugin.saveSettings();
             } catch (error) {
               console.error("保存 IMA Share Sync 提醒设置失败", error);
-              this.plugin.notifyManual("提醒设置未能保存，重启后可能恢复原设置。请检查仓库写入权限。");
+              this.plugin.notifyManual(s.saveSettingsError);
             }
           }),
       );
     }
+
+    new Setting(panelMarkdown)
+      .setName(s.enableMarkdownName)
+      .setDesc(s.enableMarkdownDesc)
+      .addToggle((toggle) =>
+        toggle.setValue(this.plugin.settings.enableMarkdownConversion).onChange(async (value) => {
+          this.plugin.settings.enableMarkdownConversion = value;
+          await this.plugin.saveSettings();
+          this.renderSettings();
+        }),
+      );
+
+    if (this.plugin.settings.enableMarkdownConversion) {
+      new Setting(panelMarkdown)
+        .setName(s.markdownScopeName)
+        .setDesc(s.markdownScopeDesc)
+        .addDropdown((dropdown) =>
+          dropdown
+            .addOption("all", s.markdownScopeAll)
+            .addOption("text_only", s.markdownScopeText)
+            .addOption("image_only", s.markdownScopeImage)
+            .setValue(this.plugin.settings.markdownConversionScope)
+          .onChange(async (value) => {
+            if (value !== "all" && value !== "text_only" && value !== "image_only") return;
+              this.plugin.settings.markdownConversionScope = value;
+              await this.plugin.saveSettings();
+            }),
+        );
+
+      new Setting(panelMarkdown)
+        .setName(s.embedPdfLinkName)
+        .setDesc(s.embedPdfLinkDesc)
+        .addToggle((toggle) =>
+          toggle.setValue(this.plugin.settings.embedPdfLinkInMarkdown).onChange(async (value) => {
+            this.plugin.settings.embedPdfLinkInMarkdown = value;
+            await this.plugin.saveSettings();
+          }),
+        );
+
+      new Setting(panelMarkdown)
+        .setName(s.manualScanName)
+        .setDesc(s.manualScanDesc)
+        .addButton((button) =>
+          button.setButtonText(s.manualScanBtn).onClick(async () => {
+            await this.plugin.convertAllVaultPdfFiles(true);
+          }),
+        );
+    }
+
+    containerEl.createDiv({
+      cls: "ima-share-sync-settings-version",
+      text: s.versionText(this.plugin.manifest.version),
+    });
   }
 }
 
@@ -766,6 +1252,7 @@ export default class ImaSpeedSyncPlugin extends Plugin {
   private nextRunId = 1;
   private unloaded = false;
   private syncReports: SyncReport[] = [];
+  private syncedAttachments: SyncedAttachment[] = [];
   private historyPanel: SyncHistoryPanel | null = null;
   private ribbonEl: HTMLElement | null = null;
   private activeNotice: { notice: Notice; interactive: boolean; failed: boolean } | null = null;
@@ -781,22 +1268,40 @@ export default class ImaSpeedSyncPlugin extends Plugin {
   override async onload(): Promise<void> {
     this.unloaded = false;
     addIcon(IMA_SHARE_SYNC_ICON_ID, IMA_SHARE_SYNC_ICON_SVG);
-    const stored = (await this.loadData()) as (Partial<ImaSpeedSyncSettings> & { syncReports?: unknown }) | null;
-    const { syncReports, ...saved } = stored ?? {};
+    const stored = (await this.loadData()) as (Partial<ImaSpeedSyncSettings> & { syncReports?: unknown; syncedAttachments?: unknown }) | null;
+    const { syncReports, syncedAttachments, ...saved } = stored ?? {};
+    this.syncedAttachments = Array.isArray(syncedAttachments) ? syncedAttachments.filter((entry: unknown): entry is SyncedAttachment => {
+      if (!entry || typeof entry !== "object") return false;
+      const value = entry as Record<string, unknown>;
+      return typeof value.path === "string" && typeof value.sourceId === "string" && typeof value.sourceScope === "string";
+    }) : [];
     this.syncReports = restoreSyncReports(syncReports);
     this.settings = {
       ...DEFAULT_SETTINGS,
       ...saved,
       // An existing installation must not silently expand from speed-reader titles to all articles.
       contentMode: saved.contentMode ?? (stored ? "speed-reader" : "general"),
+      // Do not silently expand the scope of an existing general-mode installation.
+      includeSubfolders: typeof saved.includeSubfolders === "boolean" ? saved.includeSubfolders : saved.contentMode === "general" ? false : true,
+      includeSourceFolder: typeof saved.includeSourceFolder === "boolean" ? saved.includeSourceFolder : (stored ? false : true),
+      maxFolders: saved.maxFolders ?? DEFAULT_SETTINGS.maxFolders,
+      // Preserve an explicit old opt-out instead of enabling traversal on upgrade.
+      maxFolderDepth: saved.maxFolderDepth ?? (saved.includeSubfolders === false ||
+        (saved.contentMode === "general" && saved.includeSubfolders === undefined) ? 0 : DEFAULT_SETTINGS.maxFolderDepth),
+      // Keep existing per-folder quantities until the user explicitly switches.
+      generalSelectionMode: saved.generalSelectionMode ?? (stored ? "per-folder" : "total"),
+      syncScopeMode: saved.syncScopeMode ?? "recent",
     };
+    this.settings.includeSubfolders = this.settings.maxFolderDepth > 0 &&
+      (this.settings.generalSelectionMode !== "total" || saved.includeSubfolders !== false);
     for (const key of ["notificationsEnabled", "notifyAutoSuccess", "notifyAutoFailure", "notifyManualResult", "showErrorBadge", "showOperationBefore", "showOperationAfter"] as const) {
       if (typeof this.settings[key] !== "boolean") this.settings[key] = DEFAULT_SETTINGS[key];
     }
 
+    const s = getStrings();
     this.addSettingTab(new ImaSpeedSyncSettingTab(this.app, this));
     this.registerView(VIEW_TYPE, (leaf) => new ImaSpeedSyncView(leaf, this));
-    this.ribbonEl = this.addRibbonIcon(IMA_SHARE_SYNC_ICON_ID, "打开 IMA Share Sync", () => {
+    this.ribbonEl = this.addRibbonIcon(IMA_SHARE_SYNC_ICON_ID, s.ribbonTooltip, () => {
       if (this.settings.notificationsEnabled && this.settings.showErrorBadge && this.hasUnreadSyncFailure()) {
         const failed = this.syncReports.find((report) => report.status === "failed" && !report.read);
         this.openSyncHistory(failed ? [failed] : undefined);
@@ -808,12 +1313,12 @@ export default class ImaSpeedSyncPlugin extends Plugin {
 
     this.addCommand({
       id: "sync-now",
-      name: "立即同步",
+      name: s.cmdSyncNow,
       callback: () => void this.sync(true),
     });
     this.addCommand({
       id: "cancel-sync",
-      name: "取消同步",
+      name: s.cmdCancelSync,
       callback: () => void this.cancelSync(),
     });
 
@@ -838,6 +1343,7 @@ export default class ImaSpeedSyncPlugin extends Plugin {
     if (!run) return;
 
     run.cancellationRequested = true;
+    run.pdfValidationAbort?.abort();
     this.cancellationRequested = true;
     void this.writeCancellationMarker(run).catch((error) => {
       console.error("卸载 IMA Share Sync 时写入取消标记失败", error);
@@ -855,6 +1361,7 @@ export default class ImaSpeedSyncPlugin extends Plugin {
     const save = this.saveQueue.catch(() => undefined).then(() => this.saveData({
       ...this.settings,
       syncReports: this.syncReports,
+      syncedAttachments: this.syncedAttachments,
     }));
     this.saveQueue = save;
     await save;
@@ -1037,6 +1544,8 @@ export default class ImaSpeedSyncPlugin extends Plugin {
       this.notifyManual("当前没有正在运行的 IMA Share Sync。", 3000);
       return;
     }
+    run.pdfValidationAbort?.abort();
+    run.markdownAbort?.abort();
     if (run.cancellationRequested) return;
 
     run.cancellationRequested = true;
@@ -1087,7 +1596,7 @@ export default class ImaSpeedSyncPlugin extends Plugin {
   isDestinationArticlePath(filePath: string): boolean {
     let destinationPath: string;
     try {
-      destinationPath = this.resolveDestinationPath(this.settings.destinationPath);
+      destinationPath = this.getEffectiveDestinationPath(this.settings);
     } catch {
       return false;
     }
@@ -1095,7 +1604,7 @@ export default class ImaSpeedSyncPlugin extends Plugin {
     return (
       normalizedFilePath.startsWith(`${destinationPath}/`) &&
       normalizedFilePath.slice(destinationPath.length + 1).length > 0 &&
-      !normalizedFilePath.slice(destinationPath.length + 1).includes("/") &&
+      (this.settings.contentMode === "general" || !normalizedFilePath.slice(destinationPath.length + 1).includes("/")) &&
       normalizedFilePath.toLocaleLowerCase().endsWith(".md")
     );
   }
@@ -1103,18 +1612,19 @@ export default class ImaSpeedSyncPlugin extends Plugin {
   getSortedArticles(): TFile[] {
     let folderPath: string;
     try {
-      folderPath = this.resolveDestinationPath();
+      folderPath = this.getEffectiveDestinationPath(this.settings);
     } catch {
       return [];
     }
     const folder = this.app.vault.getAbstractFileByPath(folderPath);
     if (!(folder instanceof TFolder)) return [];
 
-    return folder.children
+    const children = this.settings.contentMode === "general" ? this.getDescendants(folder) : folder.children;
+    return children
       .filter(
         (file): file is TFile =>
           file instanceof TFile &&
-          file.extension === "md",
+          (file.extension === "md" || this.syncedAttachments.some((entry) => entry.path === file.path)),
       )
       .sort((left, right) => {
         const leftTitleDate = this.getArticleTitleTimestamp(left);
@@ -1250,7 +1760,7 @@ export default class ImaSpeedSyncPlugin extends Plugin {
       const destinationPath = this.validateSettings(settings);
       await this.ensureFolder(destinationPath);
       this.assertRunActive(run);
-      const articleIndex = await this.buildArticleIndex(destinationPath);
+      const articleIndex = await this.buildArticleIndex(destinationPath, settings.contentMode === "general");
       this.assertRunActive(run);
       const skipTitles = settings.overwriteSameName
         ? []
@@ -1269,8 +1779,12 @@ export default class ImaSpeedSyncPlugin extends Plugin {
         }
       }
       this.assertRunActive(run);
-      this.updateOperationCard(run, "正在打开 IMA…");
-      const rawResult = await this.runPowerShell(settings.maxItems, skipTitles, settings, run, skipSourceIds);
+      const effectiveMaxItems = maxItems ?? (
+        settings.contentMode === "general" && (settings.syncScopeMode ?? "recent") === "all"
+          ? 1000
+          : settings.maxItems
+      );
+      const rawResult = await this.runPowerShell(effectiveMaxItems, skipTitles, settings, run, skipSourceIds);
       this.assertRunActive(run, true);
       const result = this.parseExtractionResult(rawResult);
       if (result.busy) {
@@ -1290,13 +1804,29 @@ export default class ImaSpeedSyncPlugin extends Plugin {
           left.sourceTitle.localeCompare(right.sourceTitle),
       );
       const saveErrors: ExtractionError[] = [];
+      const directoryIndexes = new Map<string, SyncedArticleIndex>();
+      const totalItems = items.length;
+      let processedIndex = 0;
       for (const item of items) {
+        processedIndex++;
         this.assertRunActive(run, extractionCanceled);
+        const displayTitle = this.normalizeSourceTitle(item.sourceTitle);
+        this.updateOperationCard(run, `正在保存 (${processedIndex}/${totalItems})：${displayTitle.slice(0, 24)}…`);
         try {
-          const status = await this.saveArticle(
+          const itemDestination = settings.contentMode === "general"
+            ? this.resolveItemDestination(destinationPath, item.relativeFolder) : destinationPath;
+          await this.ensureFolder(itemDestination);
+          let itemIndex = articleIndex;
+          if (settings.contentMode === "general") {
+            itemIndex = directoryIndexes.get(itemDestination) ?? await this.buildArticleIndex(itemDestination);
+            directoryIndexes.set(itemDestination, itemIndex);
+            // Stable identities continue to work even when the source folder/title changes.
+            itemIndex.bySourceKey = articleIndex.bySourceKey;
+          }
+          const status = item.downloadedFile ? await this.saveAttachment(item, itemDestination, settings, run, extractionCanceled, false) : await this.saveArticle(
             item,
-            destinationPath,
-            articleIndex,
+            itemDestination,
+            itemIndex,
             settings,
             run,
             extractionCanceled,
@@ -1315,7 +1845,36 @@ export default class ImaSpeedSyncPlugin extends Plugin {
         }
       }
 
+      if (!extractionCanceled) {
+        try {
+          await this.saveSettings();
+        } catch (error) {
+          console.error("保存 IMA Share Sync 附件索引失败", error);
+        }
+      }
+
+      if (!extractionCanceled && settings.enableMarkdownConversion && run.savedPdfFiles && run.savedPdfFiles.length > 0) {
+        this.updateOperationCard(run, "正在生成 Markdown 笔记…");
+        try {
+          const converted = await this.convertPdfFilesToMarkdown(run.savedPdfFiles, interactive, run);
+          this.assertRunActive(run);
+          if (converted?.failed) {
+            const error = { title: "PDF → Markdown", message: `${converted.failed} 个 PDF 转换失败，原 PDF 已保留；详细原因见 Obsidian 开发者控制台。` };
+            saveErrors.push(error);
+            issues.push(error);
+          }
+        } catch (err) {
+          this.assertRunActive(run);
+          const error = { title: "PDF → Markdown", message: `转换阶段失败，原 PDF 已保留：${err instanceof Error ? err.message : String(err)}` };
+          saveErrors.push(error);
+          issues.push(error);
+        }
+      }
+
       const errors = [...(result.errors ?? []), ...saveErrors];
+      const articleErrors = errors.filter((error) => error.title.trim());
+      const taskErrors = errors.filter((error) => !error.title.trim());
+      const firstTaskError = taskErrors[0];
       const preserved = counts.created + counts.updated + counts.unchanged;
       const resultParts = [
         counts.created ? `新增 ${counts.created} 篇` : "",
@@ -1323,11 +1882,14 @@ export default class ImaSpeedSyncPlugin extends Plugin {
         counts.unchanged ? `无变化 ${counts.unchanged} 篇` : "",
         counts.skipped ? `跳过 ${counts.skipped} 篇` : "",
         counts.conflict ? `同名冲突 ${counts.conflict} 篇（未覆盖）` : "",
-        errors.length ? `失败 ${errors.length} 篇` : "",
+        articleErrors.length ? `失败 ${articleErrors.length} 篇` : "",
+        taskErrors.length ? "流程异常" : "",
       ].filter(Boolean).join(" · ");
       const summary = extractionCanceled
         ? `同步已取消：已保留 ${preserved} 篇${resultParts ? ` · ${resultParts}` : ""}`
-        : `同步${errors.length || counts.conflict ? "有异常" : "完成"}：${resultParts || "暂无新文章"}`;
+        : firstTaskError && !items.length && !counts.skipped
+          ? `同步未完成：${firstTaskError.message}`
+          : `同步${errors.length || counts.conflict ? "有异常" : "完成"}：${resultParts || "暂无新文章"}`;
       await this.recordSyncReport({
         finishedAt: Date.now(), interactive,
         status: errors.length || counts.conflict ? "failed" : extractionCanceled ? "canceled" : "success",
@@ -1353,6 +1915,10 @@ export default class ImaSpeedSyncPlugin extends Plugin {
         errors: [...issues, { title: "同步任务", message: detail }],
       });
     } finally {
+      run.pdfValidationAbort?.abort();
+      if (run.stagingDirectory) {
+        await rm(run.stagingDirectory, { recursive: true, force: true }).catch((error) => console.error("清理同步暂存文件失败", error));
+      }
       if (run.card) {
         const report = run.report;
         try {
@@ -1393,16 +1959,38 @@ export default class ImaSpeedSyncPlugin extends Plugin {
     if (!settings.folderName.trim()) {
       throw new Error("请先填写完整的 IMA 文件夹名称。");
     }
-    if (!Number.isInteger(settings.maxItems) || settings.maxItems < 1 || settings.maxItems > 30) {
-      throw new Error("检查最近文章数必须在 1–30 之间。");
+    if (!Number.isInteger(settings.maxItems) || settings.maxItems < 1 || settings.maxItems > 1000) {
+      throw new Error("检查数量必须在 1–1000 之间。");
+    }
+    if (settings.syncScopeMode && !["all", "recent"].includes(settings.syncScopeMode)) {
+      throw new Error("同步范围模式无效。");
     }
     if (!["general", "speed-reader"].includes(settings.contentMode)) throw new Error("内容模式无效。");
+    if (settings.contentMode === "general") {
+      if (!["total", "per-folder"].includes(settings.generalSelectionMode)) throw new Error("文件检查数量规则无效。");
+      if (typeof settings.includeSubfolders !== "boolean") throw new Error("包含子文件夹开关无效。");
+      if (!Number.isInteger(settings.maxFolders) || settings.maxFolders < 1 || settings.maxFolders > 20) {
+        throw new Error("最多检查文件夹数必须在 1–20 之间。");
+      }
+      if (!Number.isInteger(settings.maxFolderDepth) || settings.maxFolderDepth < 0 || settings.maxFolderDepth > 5) {
+        throw new Error("向下查找层数必须在 0–5 之间。");
+      }
+    }
     if (!["all", "contains", "prefix", "regex"].includes(settings.titleFilterMode)) throw new Error("标题筛选方式无效。");
     if (settings.contentMode === "general" && settings.titleFilterMode !== "all" && !settings.titleFilter.trim()) {
       throw new Error("请填写标题筛选内容，或选择“全部标题”。");
     }
     if (settings.titleFilter.length > 300) throw new Error("标题筛选内容不能超过 300 个字符。");
-    return this.resolveDestinationPath(settings.destinationPath);
+    return this.getEffectiveDestinationPath(settings);
+  }
+
+  getEffectiveDestinationPath(settings: Readonly<ImaSpeedSyncSettings> = this.settings): string {
+    const base = this.resolveDestinationPath(settings.destinationPath);
+    if (settings.includeSourceFolder && settings.folderName.trim()) {
+      const safe = this.sanitizeBasename(settings.folderName.trim());
+      if (safe) return normalizePath(`${base}/${safe}`);
+    }
+    return base;
   }
 
   private resolveDestinationPath(destinationPath = this.settings.destinationPath): string {
@@ -1434,6 +2022,26 @@ export default class ImaSpeedSyncPlugin extends Plugin {
     }
   }
 
+  private getDescendants(folder: TFolder): (TFile | TFolder)[] {
+    const entries: (TFile | TFolder)[] = [];
+    for (const child of folder.children) {
+      if (child instanceof TFolder) entries.push(...this.getDescendants(child));
+      else if (child instanceof TFile) entries.push(child);
+    }
+    return entries;
+  }
+
+  private resolveItemDestination(destination: string, folders: string[] = []): string {
+    if (folders.length > 5) throw new Error("子目录层级超过 5 层。");
+    const parts = folders.map((part) => {
+      if (!part.trim() || part === "." || part === "..") throw new Error("来源子目录名称无效。");
+      const safe = this.sanitizeBasename(part);
+      // Distinct source folder names must not collapse onto the same local path.
+      return safe === part ? safe : `${safe}-${createHash("sha256").update(part).digest("hex").slice(0, 8)}`;
+    });
+    return this.resolveDestinationPath([destination, ...parts].join("/"));
+  }
+
   private async saveArticle(
     item: ExtractedArticle,
     destinationPath: string,
@@ -1458,6 +2066,9 @@ export default class ImaSpeedSyncPlugin extends Plugin {
     const preferredBasename = this.sanitizeBasename(sourceTitle);
     if (!general) existing ??= articleIndex.markdownByBasename.get(preferredBasename.toLocaleLowerCase());
     const preferredFileName = `${preferredBasename}.md`.toLocaleLowerCase();
+    if (!settings.overwriteSameName && (existing || articleIndex.occupiedFileNames.has(preferredFileName))) {
+      return "skipped";
+    }
     if (general && !existing && articleIndex.occupiedFileNames.has(preferredFileName)) {
       console.warn(`IMA 同名冲突：${sourceTitle}；来源不同或无法确认，未覆盖原文件。`);
       return "conflict";
@@ -1487,12 +2098,100 @@ export default class ImaSpeedSyncPlugin extends Plugin {
       console.warn(`IMA 来源身份不明：${sourceTitle}；仅有内容指纹，未覆盖已有文件。`);
       return "conflict";
     }
-    this.assertRunActive(run, allowCancellation);
-    await this.app.vault.process(existing, () => markdown);
+    this.assertRunActive(run);
+    await this.app.vault.process(existing, () => {
+      this.assertRunActive(run);
+      return markdown;
+    });
     articleIndex.bySourceKey.set(sourceKey, existing);
     articleIndex.markdownByBasename.set(existing.basename.toLocaleLowerCase(), existing);
     articleIndex.legacyBySourceTitle.delete(sourceTitle);
     return "updated";
+  }
+
+  private async saveAttachment(
+    item: ExtractedArticle,
+    destination: string,
+    settings: Readonly<ImaSpeedSyncSettings>,
+    run: SyncRun,
+    allowCancellation: boolean,
+    persistSettings = true,
+  ): Promise<SaveStatus> {
+    if (settings.contentMode !== "general" || !item.complete || !run.stagingDirectory ||
+      !/^downloads\/file-[a-f0-9]{32}\.(pdf|png|jpe?g|gif|webp|mp3|wav|m4a|mp4|webm|ogg)$/.test(item.downloadedFile ?? "")) {
+      throw new Error("原文件下载结果无效。");
+    }
+    const staging = await realpath(run.stagingDirectory);
+    const stagedPath = await realpath(path.join(staging, item.downloadedFile!));
+    const relative = path.relative(staging, stagedPath);
+    if (path.isAbsolute(relative) || relative.startsWith(`..${path.sep}`) || relative === "..") throw new Error("原文件不在本次暂存目录内。");
+    const stat = await lstat(stagedPath);
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.size <= 0 || stat.size > 256 * 1024 * 1024) throw new Error("原文件为空、过大或类型无效。");
+    const data = await readFile(stagedPath);
+    const extension = path.extname(stagedPath).toLowerCase();
+    const header = data.subarray(0, 16);
+    const ascii = header.toString("latin1");
+    const valid = extension === ".pdf" ? ascii.startsWith("%PDF-") && data.subarray(-2048).includes(Buffer.from("%%EOF"))
+      : extension === ".png" ? header.subarray(0, 8).equals(Buffer.from([137,80,78,71,13,10,26,10]))
+      : [".jpg", ".jpeg"].includes(extension) ? header[0] === 255 && header[1] === 216 && data.at(-2) === 255 && data.at(-1) === 217
+      : extension === ".gif" ? /^GIF8[79]a/.test(ascii)
+      : extension === ".webp" ? ascii.startsWith("RIFF") && ascii.slice(8,12) === "WEBP"
+      : extension === ".wav" ? ascii.startsWith("RIFF") && ascii.slice(8,12) === "WAVE"
+      : extension === ".ogg" ? ascii.startsWith("OggS")
+      : extension === ".webm" ? header.subarray(0,4).equals(Buffer.from([26,69,223,163]))
+      : [".mp4", ".m4a"].includes(extension) ? ascii.slice(4,8) === "ftyp"
+      : ascii.startsWith("ID3") || (header[0] === 255 && (header[1]! & 224) === 224);
+    if (!valid) throw new Error("下载内容不是有效原文件，未将错误页或残缺内容存入仓库。");
+    this.assertRunActive(run, allowCancellation);
+    if (extension === ".pdf") {
+      const controller = new AbortController();
+      run.pdfValidationAbort = controller;
+      try {
+        await validatePdfStructure(data, { signal: controller.signal, timeoutMs: 30_000 });
+      } catch (error) {
+        if (controller.signal.aborted) throw new SyncCanceledError();
+        throw error;
+      } finally {
+        if (run.pdfValidationAbort === controller) run.pdfValidationAbort = undefined;
+      }
+      this.assertRunActive(run, allowCancellation);
+    }
+    const scope = this.createSourceScope(settings);
+    const known = item.sourceId ? this.syncedAttachments.find((entry) => entry.sourceScope === scope && entry.sourceId === item.sourceId) : undefined;
+    const knownFile = known ? this.app.vault.getAbstractFileByPath(known.path) : null;
+    const title = this.normalizeSourceTitle(item.sourceTitle);
+    const name = `${this.sanitizeBasename(title.replace(/\.[^.]+$/, ""))}${extension}`;
+    const target = knownFile instanceof TFile && knownFile.path.startsWith(`${this.getEffectiveDestinationPath(settings)}/`)
+      ? knownFile.path : normalizePath(`${destination}/${name}`);
+    const parent = this.app.vault.getAbstractFileByPath(target.slice(0, target.lastIndexOf("/")));
+    const existing = this.app.vault.getAbstractFileByPath(target) ?? (parent instanceof TFolder
+      ? parent.children.find((file) => file.name.toLocaleLowerCase() === name.toLocaleLowerCase()) : undefined);
+    if (existing && !settings.overwriteSameName) return "skipped";
+    if (existing && (!(existing instanceof TFile) || existing !== knownFile)) return "conflict";
+    this.assertRunActive(run, allowCancellation);
+    const bytes = Uint8Array.from(data).buffer;
+    if (existing instanceof TFile) {
+      const current = await this.app.vault.readBinary(existing);
+      // Completed new downloads may be preserved after extraction cancellation,
+      // but cancellation never authorizes replacing an existing user file.
+      this.assertRunActive(run);
+      if (Buffer.from(current).equals(data)) {
+        if (extension === ".pdf") {
+          run.savedPdfFiles ??= [];
+          run.savedPdfFiles.push({ path: target, title });
+        }
+        return "unchanged";
+      }
+      await this.app.vault.modifyBinary(existing, bytes);
+    } else await this.app.vault.createBinary(target, bytes);
+    if (extension === ".pdf") {
+      run.savedPdfFiles ??= [];
+      run.savedPdfFiles.push({ path: target, title });
+    }
+    this.syncedAttachments = this.syncedAttachments.filter((entry) => entry.path !== target);
+    if (item.sourceId) this.syncedAttachments.push({ path: target, sourceId: item.sourceId, sourceScope: scope });
+    if (persistSettings) await this.saveSettings();
+    return existing ? "updated" : "created";
   }
 
   private isValidSourceDate(value: unknown): value is string {
@@ -1510,7 +2209,7 @@ export default class ImaSpeedSyncPlugin extends Plugin {
     // exact content + source location is only a conservative same-content fallback.
     const identity = item.sourceId
       ? [this.createSourceScope(settings), "card", item.sourceId]
-      : [this.createSourceScope(settings), settings.folderName.trim(), item.sourceTitle, "content", item.body.replace(/\r\n?/g, "\n").trim()];
+      : [this.createSourceScope(settings), settings.folderName.trim(), ...(item.relativeFolder ?? []), item.sourceTitle, "content", item.body.replace(/\r\n?/g, "\n").trim()];
     return `general:${createHash("sha256").update(JSON.stringify(identity), "utf8").digest("hex")}`;
   }
 
@@ -1518,7 +2217,9 @@ export default class ImaSpeedSyncPlugin extends Plugin {
     const scope = this.createSourceScope(settings);
     return [...new Set([...index.metadataByPath.values()]
       .filter((metadata) => metadata.sourceScope === scope && metadata.sourceId)
-      .map((metadata) => metadata.sourceId!))];
+      .map((metadata) => metadata.sourceId!).concat(this.syncedAttachments.filter((entry) =>
+        entry.sourceScope === scope && entry.path.startsWith(`${this.getEffectiveDestinationPath(settings)}/`) &&
+        this.app.vault.getAbstractFileByPath(entry.path) instanceof TFile).map((entry) => entry.sourceId)))];
   }
 
   private formatArticleMarkdown(
@@ -1557,7 +2258,7 @@ export default class ImaSpeedSyncPlugin extends Plugin {
     ].join("\n");
   }
 
-  private async buildArticleIndex(destinationPath: string): Promise<SyncedArticleIndex> {
+  private async buildArticleIndex(destinationPath: string, recursive = false): Promise<SyncedArticleIndex> {
     const folder = this.app.vault.getAbstractFileByPath(destinationPath);
     if (!(folder instanceof TFolder)) {
       throw new Error(`保存文件夹不存在：${destinationPath}`);
@@ -1571,7 +2272,7 @@ export default class ImaSpeedSyncPlugin extends Plugin {
     const sourceTitles = new Set<string>();
     const metadataByPath = new Map<string, SyncedArticleMetadata>();
 
-    for (const child of folder.children) {
+    for (const child of recursive ? this.getDescendants(folder) : folder.children) {
       occupiedFileNames.add(child.name.toLocaleLowerCase());
       if (!(child instanceof TFile) || child.extension.toLocaleLowerCase() !== "md") continue;
 
@@ -1720,6 +2421,20 @@ export default class ImaSpeedSyncPlugin extends Plugin {
     } catch {
       throw new Error(`PowerShell 返回了无效 JSON：${text.slice(0, 200)}`);
     }
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      const obj = parsed as Record<string, unknown>;
+      if (Array.isArray(obj.items)) {
+        for (const item of obj.items) {
+          if (item && typeof item === "object") {
+            const raw = item as Record<string, unknown>;
+            if (Array.isArray(raw.downloadedFile)) {
+              const fileStr = (raw.downloadedFile as unknown[]).filter((part): part is string => typeof part === "string").pop();
+              raw.downloadedFile = fileStr;
+            }
+          }
+        }
+      }
+    }
     if (!this.isExtractionResult(parsed)) {
       throw new Error("PowerShell 返回的结果格式无效。");
     }
@@ -1744,7 +2459,14 @@ export default class ImaSpeedSyncPlugin extends Plugin {
             typeof (item as Record<string, unknown>).sourceTitle === "string" &&
             ((item as Record<string, unknown>).updatedDate == null || typeof (item as Record<string, unknown>).updatedDate === "string") &&
             ((item as Record<string, unknown>).sourceId === undefined || typeof (item as Record<string, unknown>).sourceId === "string") &&
+            ((item as Record<string, unknown>).downloadedFile === undefined ||
+              typeof (item as Record<string, unknown>).downloadedFile === "string" ||
+              (Array.isArray((item as Record<string, unknown>).downloadedFile) &&
+                ((item as Record<string, unknown>).downloadedFile as unknown[]).some((part) => typeof part === "string"))) &&
             ((item as Record<string, unknown>).complete === undefined || typeof (item as Record<string, unknown>).complete === "boolean") &&
+            ((item as Record<string, unknown>).relativeFolder === undefined ||
+              (Array.isArray((item as Record<string, unknown>).relativeFolder) &&
+                ((item as Record<string, unknown>).relativeFolder as unknown[]).every((part) => typeof part === "string"))) &&
             typeof (item as Record<string, unknown>).body === "string",
         ))
     ) {
@@ -1786,7 +2508,10 @@ export default class ImaSpeedSyncPlugin extends Plugin {
     await mkdir(runtimeRoot, { recursive: true });
     this.assertRunActive(run);
     const runDirectory = await mkdtemp(path.join(runtimeRoot, "run-"));
+    run.stagingDirectory = runDirectory;
     try {
+      const downloadDirectory = path.join(runDirectory, "downloads");
+      await mkdir(downloadDirectory);
       const scriptPath = await this.writeRuntimeScript(runDirectory);
       const inputPath = path.join(runDirectory, "input.json");
       const outputPath = path.join(runDirectory, "output.json");
@@ -1796,6 +2521,18 @@ export default class ImaSpeedSyncPlugin extends Plugin {
 
       await writeFile(inputPath, JSON.stringify({
         skipTitles, skipSourceIds,
+        syncScopeMode: settings.syncScopeMode ?? "recent",
+        generalSelectionMode: settings.generalSelectionMode,
+        includeSubfolders: settings.includeSubfolders && settings.maxFolderDepth > 0,
+        maxFolders: settings.maxFolders,
+        maxFolderDepth: settings.includeSubfolders ? settings.maxFolderDepth : 0,
+        downloadDirectory,
+        existingFiles: settings.overwriteSameName ? [] : (() => {
+          const destination = this.getEffectiveDestinationPath(settings);
+          const folder = this.app.vault.getAbstractFileByPath(destination);
+          return folder instanceof TFolder ? this.getDescendants(folder)
+            .filter((file) => file instanceof TFile).map((file) => file.path.slice(destination.length + 1)) : [];
+        })(),
         contentMode: settings.contentMode,
         titleFilterMode: settings.titleFilterMode,
         titleFilter: settings.titleFilter,
@@ -1906,7 +2643,7 @@ export default class ImaSpeedSyncPlugin extends Plugin {
         this.currentProcess = null;
         this.cancellationPath = null;
       }
-      await rm(runDirectory, { recursive: true, force: true }).catch(() => undefined);
+      // sync() owns cleanup after binary files have been imported into the vault.
     }
   }
 
@@ -1956,5 +2693,102 @@ export default class ImaSpeedSyncPlugin extends Plugin {
     } finally {
       this.consentPromise = null;
     }
+  }
+
+  async convertPdfFilesToMarkdown(
+    pdfFiles: { path: string; title: string }[],
+    showNotice = true,
+    run?: SyncRun,
+  ): Promise<ConvertResultSummary | undefined> {
+    if (!this.settings.enableMarkdownConversion || !pdfFiles.length) return;
+    if (!(this.app.vault.adapter instanceof FileSystemAdapter)) return;
+
+    const vaultBase = this.app.vault.adapter.getBasePath();
+
+    const tasks: ConvertTask[] = [];
+    for (const file of pdfFiles) {
+      const fullPdfPath = path.isAbsolute(file.path) ? file.path : path.join(vaultBase, file.path);
+      const fullMdPath = fullPdfPath.replace(/\.pdf$/i, ".md");
+      tasks.push({
+        pdfPath: fullPdfPath,
+        mdPath: fullMdPath,
+        title: file.title,
+        embedPdfLink: this.settings.embedPdfLinkInMarkdown,
+        scope: this.settings.markdownConversionScope,
+      });
+    }
+
+    let notice: Notice | undefined;
+    if (showNotice) {
+      notice = new Notice(`正在转换 Markdown 笔记 (0/${tasks.length})...`, 0);
+    }
+
+    const abortController = new AbortController();
+    if (run) run.markdownAbort = abortController;
+
+    try {
+      const result = await runMarkdownConversion(
+        tasks,
+        markdownRunnerScript,
+        (progress, total) => {
+          if (notice) {
+            notice.setMessage(`正在转换 Markdown 笔记 (${progress}/${total})...`);
+          }
+        },
+        abortController.signal,
+      );
+      if (notice) notice.hide();
+      if (showNotice) {
+        new Notice(
+          `Markdown 转换完成：新增/更新 ${result.completed} 篇，跳过 ${result.skipped} 篇${result.failed ? `，失败 ${result.failed} 篇` : ""}`,
+        );
+      }
+      return result;
+    } catch (err) {
+      if (notice) notice.hide();
+      console.error("Markdown 转换执行异常:", err);
+      if (showNotice) {
+        new Notice(`Markdown 转换失败: ${err instanceof Error ? err.message : String(err)}`);
+      }
+      if (run) throw err;
+    } finally {
+      if (run && run.markdownAbort === abortController) {
+        run.markdownAbort = undefined;
+      }
+    }
+  }
+
+  async convertAllVaultPdfFiles(interactive = true): Promise<void> {
+    if (!(this.app.vault.adapter instanceof FileSystemAdapter)) return;
+    const vaultBase = this.app.vault.adapter.getBasePath();
+    const targetDir = this.getEffectiveDestinationPath(this.settings);
+    const fullTargetDir = path.join(vaultBase, targetDir);
+
+    const pdfList: { path: string; title: string }[] = [];
+    const walk = async (dir: string) => {
+      try {
+        const entries = await readdir(dir, { withFileTypes: true });
+        for (const entry of entries) {
+          const fullP = path.join(dir, entry.name);
+          if (entry.isDirectory()) {
+            await walk(fullP);
+          } else if (entry.isFile() && entry.name.toLowerCase().endsWith(".pdf")) {
+            const relPath = path.relative(vaultBase, fullP).replace(/\\/g, "/");
+            const title = entry.name.replace(/\.pdf$/i, "");
+            pdfList.push({ path: relPath, title });
+          }
+        }
+      } catch { /* Skip directories that cannot be read; preserve existing files. */ }
+    };
+
+    await walk(fullTargetDir);
+
+    if (!pdfList.length) {
+      if (interactive) new Notice(`未在目标目录 [${targetDir}] 下找到任何 PDF 文件。`);
+      return;
+    }
+
+    if (interactive) new Notice(`扫描到 ${pdfList.length} 篇 PDF，开始生成 Markdown...`);
+    await this.convertPdfFilesToMarkdown(pdfList, interactive);
   }
 }

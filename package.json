@@ -1,7 +1,7 @@
 {
   "name": "ima-share-sync",
-  "version": "0.1.2",
-  "description": "Windows Obsidian plugin for syncing IMA shared text articles to local Markdown notes.",
+  "version": "0.2.0",
+  "description": "Windows Obsidian plugin for syncing IMA articles and permitted original files, with local PDF-to-Markdown conversion.",
   "private": true,
   "license": "MIT",
   "scripts": {
@@ -10,16 +10,22 @@
     "lint": "eslint src/**/*.ts",
     "typecheck": "tsc --noEmit",
     "test:js": "node tests/test-main.cjs",
-    "test:ps": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/test-sync.ps1 && powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/test-general.ps1",
+    "test:pdf": "node tests/test-pdf-validation.mjs",
+    "test:ps": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/test-sync.ps1 && powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/test-general.ps1 && powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/test-general-folders.ps1 && powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/test-list-readiness.ps1 && powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/test-original-file-safety.ps1",
     "test:card": "node tests/test-operation-card.cjs",
-    "test": "npm run build && npm run test:js && npm run test:ps && npm run test:card",
+    "test": "npm run build && npm run test:js && npm run test:pdf && npm run test:markdown && npm run test:ps && npm run test:card",
     "verify:release": "node scripts/verify-release.mjs",
-    "check": "npm run verify:release && npm run lint && npm run typecheck && npm test"
+    "check": "npm run verify:release && npm run lint && npm run typecheck && npm test",
+    "test:markdown": "node tests/test-markdown-conversion.mjs"
   },
   "engines": {
     "node": ">=20"
   },
+  "dependencies": {
+    "pdf-lib": "1.17.1"
+  },
   "devDependencies": {
+    "@firecrawl/pdf-inspector-wasm": "1.25.2",
     "@types/node": "22.20.1",
     "@typescript-eslint/parser": "^8.67.0",
     "esbuild": "^0.28.2",

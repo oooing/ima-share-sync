@@ -1,191 +1,62 @@
-# IMA Share Sync — Full guide
+# IMA Share Sync guide
 
-[Back to overview](../README.md)
+**English** · [简体中文](GUIDE.zh-CN.md)
 
-**English** · [简体中文](https://github.com/oooing/ima-share-sync/blob/main/docs/GUIDE.zh-CN.md)
+Save IMA shared articles and permitted original files in an Obsidian vault for local reading and research.
 
-![IMA Share Sync — from shared reading to your own knowledge](assets/hero-en.svg)
+## Install or update
 
-**Less copying. More reading, thinking, and connecting ideas.**
+Requires Windows 10+, Obsidian 1.11.4+, and the installed, signed-in IMA desktop app with access to your source.
 
-Save text articles shared in IMA to your own Obsidian vault as local Markdown notes.
+1. Download main.js, manifest.json, and styles.css from the [latest release](https://github.com/oooing/ima-share-sync/releases/latest).
+2. Place them in your vault's .obsidian/plugins/ima-speed-sync/ directory.
+3. Keep data.json when updating. Reload the plugin or restart Obsidian.
+4. Confirm v0.2.0 beside the plugin title or in settings. Reloading may start a sync if startup sync is enabled.
 
-Windows only · No other Obsidian plugins required · Local Markdown · MIT licensed
+The PDF converter and parser are embedded. No separate Node.js installation, other plugin, or developer checkout is needed. A GitHub release does not establish Obsidian Community directory approval.
 
-[Download 0.1.2](https://github.com/oooing/ima-share-sync/releases/tag/0.1.2) · [Quick start](#quick-start) · [Limitations](#before-you-start) · [Report an issue](https://github.com/oooing/ima-share-sync/issues)
+## First sync
 
----
+Open Settings → Community plugins → IMA Share Sync → Sync Scope. Enter the knowledge-base and folder names as shown in IMA, and choose a vault-relative destination.
 
-## Does this sound familiar?
+Run Sync now manually and review the access consent. Startup sync defaults to off; enable it under General after checking your configuration. Automatic countdowns can be deferred or canceled, and running syncs can be stopped.
 
-You follow an IMA shared knowledge base for daily industry briefings, study materials, or team notes. You read in IMA, but keep your own research and conclusions in Obsidian.
+## Scope and selection
 
-Saving an article means repeating the same routine:
+- **Sync Recent:** 1–30 candidates, default 30 for a new installation. Defaults to one recently updated folder and one level of subfolders. Results are recent within the selected scope, not across the entire source tree.
+- **Sync All:** expands the scope, with depth, title-filter, list-read budgets and a 1,000-candidate protection limit. Legacy per-folder selection applies its limit per folder. This is not unlimited export.
+- **Keep Folder / Subfolders:** preserve source directory names and relative hierarchy.
+- **Advanced:** recent-mode folder limit 1–20, maximum depth 5, and optional keyword, prefix or regular-expression title filters.
 
-**Open → copy → create a note → fix the formatting → check whether you saved it before.**
+New installations use a total-per-run limit: seven items across two folders still means at most seven. Existing, duplicate, failed or missing items do not trigger backfilling. Existing configurations retain per-folder counting until explicitly migrated. See [selection details](general-selection.md). The legacy speed-reader mode keeps its existing layout and selection behavior.
 
-A few days later, it becomes hard to remember what is saved, what is missing, and which failed attempt needs another try.
+## Original files and PDF conversion
 
-**IMA Share Sync handles that repeated transfer.** It reads shared text articles you are allowed to access through your local IMA desktop app and saves them to a folder in your vault. From there, search, annotate, and link them to your own ideas.
+Text articles become Markdown. PDF, image and supported audio/video originals require an available, permitted IMA download route. Missing routes, unclear identity, permission restrictions and invalid file formats produce a skip or error.
 
-> **Example: your daily research reading**
->
-> Sync an IMA folder called “Daily Briefings” to `Research/Industry` in Obsidian.
->
-> Set the plugin to check the latest **7 articles**. If 5 are recognized as already saved and 2 are new, the default no-overwrite mode skips the saved items and imports the new ones as Markdown.
->
-> Tomorrow, sync again and spend your time writing conclusions rather than moving text. If something fails, the sync history explains why.
->
-> *7 is the candidate limit, not a quota of 7 new notes. The plugin does not keep scanning older articles to fill that quota.*
+Before importing a PDF, the plugin checks its real page tree and rejects fake, truncated, empty, broken, cyclic or encrypted files. Validation does not alter the original and does not verify every font, image or content stream.
 
-![Example: check seven recent articles, skip five saved sources, save two new notes](assets/workflow-en.svg)
+Under Convert, enable automatic PDF-to-Markdown conversion, select PDF types and choose whether to link the original. Fill Now scans the effective destination and its subfolders.
 
-## What it takes care of
+- Text and mixed PDFs retain extractable text; complex layouts and tables may differ.
+- Image-only scans get a linked placeholder note. OCR is not included.
+- Newer generated notes are skipped; existing notes not generated by this converter are protected.
+- Conversion uses a local background worker with cancellation and failure details. Source PDFs are preserved.
 
-| What you need | What the plugin does |
-| --- | --- |
-| Keep shared reading in your own vault | Saves text articles as local Markdown notes |
-| Avoid repeated copying | Defaults to no overwrite; skips recognized saved sources |
-| Protect your own notes | In general-text mode, treats uncertain same-name sources as conflicts rather than overwriting them |
-| Recover a missing note | Can retry a deleted local note if its source is still within the checked range |
-| Know when automation will run | Shows a five-second preflight for automatic sync; lets you defer, cancel, or stop |
-| See what happened | Keeps a paginated sync history in the sidebar, with 20 runs per page and error details |
-| Keep your setup simple | Runs independently, without other Obsidian plugins |
+## Settings and history
 
-## Quick start
+Settings use Sync Scope, Convert, Notices and General tabs. Choose Chinese, English or Follow Obsidian under General. Some sidebar, consent and runtime messages remain Chinese.
 
-### 1 · Check the requirements
+Articles open in the main Obsidian editor. History retains paginated run details and links from error indicators. Configure automatic/manual notifications, badges and desktop cards under Notices.
 
-- **Windows 10 or later**, with an interactive desktop session.
-- **Obsidian desktop 1.11.4 or later**.
-- The **IMA desktop app**, installed and signed in, with access to the source knowledge base and folder.
+## Local data and privacy
 
-macOS, Linux, Android, and iOS are not supported. The current extractor targets the verified **Chinese IMA sharing interface**. The plugin interface currently uses Chinese labels; English translations below help you locate the controls.
+Save only content you may copy or download. The plugin does not unlock paid content or bypass permissions. Existing same-name files are protected by default, and unconfirmed identities do not overwrite them.
 
-### 2 · Install the plugin
+Windows UI Automation, bundled PowerShell and local PDF parsing may open IMA. Sync extraction uses temporary local directories and attempts cleanup; conversion runs in a local worker. Diagnostics at %LOCALAPPDATA%\ima-speed-sync\sync.log can include titles and errors.
 
-Download `main.js`, `manifest.json`, and `styles.css` from the [0.1.2 release](https://github.com/oooing/ima-share-sync/releases/tag/0.1.2), then place them here:
+No telemetry or custom upload service. IMA downloads need internet; separately configured cloud agents or vault-sync services may upload content you authorize. See [security](../SECURITY.md).
 
-```text
-Your vault/
-└─ .obsidian/
-   └─ plugins/
-      └─ ima-speed-sync/
-         ├─ main.js
-         ├─ manifest.json
-         └─ styles.css
-```
+## Development and evidence
 
-Enable **IMA Share Sync** under **Settings → Community plugins**. Restart Obsidian if the list has not refreshed.
-
-> `ima-speed-sync` is the legacy internal ID, retained for installation compatibility. The display name is **IMA Share Sync**. When upgrading, replace only the three files above. **Keep `data.json`** to preserve settings and sync history.
-
-### 3 · Choose a source and destination
-
-| Setting | Example |
-| --- | --- |
-| IMA knowledge-base name | My Reading |
-| IMA folder name | Daily Briefings |
-| Obsidian destination folder | `Research/Industry` |
-| Content mode | 通用文字 — General text |
-| Recent articles to check | 7 |
-
-Enter the full names exactly as they appear in IMA. The destination is a **relative path within the current vault**.
-
-### 4 · Click 立即同步 — Sync now
-
-Approve the local automation consent on first use. After that, manual sync starts immediately, **without an extra countdown**.
-
-Open **文章 (Articles)** from the sidebar home, then click a title to open its note directly in Obsidian. Open **同步日志 (Sync logs)** for a separate history list with 20 runs per page. Expand an individual record for results and errors; the top-left arrow returns home without deleting records or resetting the page number.
-
-The installed version appears beside the sidebar title and in settings.
-
-## Stay informed, without constant interruptions
-
-**When you click Sync now:** a small bottom-right operation card shows progress and a stop button. The completion message contains only the key results.
-
-**When you enable startup sync:** automatic runs show a five-second preflight by default. Start immediately, defer for five minutes, or cancel. Startup sync is off by default and requires your consent.
-
-**When something goes wrong:** a brief notification links to the reason; full details remain in the sync history. Reading the record clears the unread error badge. A new error can notify you again.
-
-Notifications, error badges, and start/end prompts are configurable. Turning them off does not remove the history, and a stop control remains available during a run.
-
-![Illustration of manual sync, optional startup sync, and persistent sync history](assets/control-en.svg)
-
-*Workflow illustration, not an application screenshot. The current plugin UI uses Chinese labels.*
-
-## Before you start
-
-### Text articles, not a complete IMA export
-
-New installations default to general-text mode. Articles do not need a date-based title, a table of contents, an update timestamp, or a minimum length.
-
-- Recognized titles, body text, links, and dividers are preserved as Markdown where possible.
-- Inaccessible link targets or unconfirmed content boundaries produce an error instead of being reported as a complete import.
-- **PDFs, images, attachments, embedded cards, and complex tables** are not fully exported.
-- IMA interface changes can affect extraction.
-
-<details>
-<summary>Will upgrading broaden my existing sync scope?</summary>
-
-No. Existing installations keep the legacy “速看” preset and its title and article-structure rules. Switch to “通用文字” (General text) explicitly when you want to sync other text articles.
-
-</details>
-
-<details>
-<summary>Does no-overwrite mode check saved articles for updates?</summary>
-
-No. It skips recognized local sources rather than checking for newer revisions. In general-text mode, overwrite still requires a confirmed source match; uncertain matches protect the existing file. The legacy preset retains its filename-based behavior. See the technical documentation for details.
-
-</details>
-
-<details>
-<summary>Can I keep using my computer during sync?</summary>
-
-The plugin prefers accessibility operations scoped to the IMA window. It does not use global select-all/copy or the clipboard. However, IMA may bring its own windows forward: this is not a fully headless background service. Avoid interacting with the article being read.
-
-Optional foreground fallback is off by default and must be enabled by you. You can stop a run at any time; cancellation keeps only articles already verified and saved.
-
-</details>
-
-<details>
-<summary>Why does the sidebar order differ from Obsidian's file explorer?</summary>
-
-The plugin prefers recognizable dates in titles, newest first, then available source timestamps or local creation times. Obsidian's file explorer has its own sort settings. The plugin does not invent a year for titles or automatically rename old notes.
-
-</details>
-
-## Local content, transparent permissions
-
-The plugin reads text accessible to your signed-in IMA account and creates or updates Markdown in your chosen vault folder. It has **no telemetry, ads, or custom upload service**. IMA itself may need a network connection.
-
-Sync history is stored in the plugin's `data.json`. Technical diagnostics are stored in `%LOCALAPPDATA%\ima-speed-sync\sync.log`. Logs may include article titles; inspect and redact them before sharing. Your vault backup or sync service may also copy these files.
-
-**Desktop automation and access outside the vault:** the plugin runs bundled PowerShell scripts and Windows UI Automation through `child_process`. Temporary scripts, extraction results, and operation-card communication use `%TEMP%\ima-speed-sync\run-*` and `%TEMP%\ima-operation-card-*`. Cleanup is attempted when a run ends, but crashes or cleanup failures can leave temporary files. The IMA installation path under `%LOCALAPPDATA%` may be checked to launch the client. The plugin does not download executable dependencies or update itself.
-
-**Accounts and websites:** install and sign in to IMA yourself. The plugin does not collect your IMA password or send content to its own server. GitHub support and documentation links open in your browser only when clicked.
-
-Only sync content you have permission to copy and save. This is an independent community project, **not an official Tencent, IMA, or Obsidian product**, and does not imply their endorsement.
-
-## Development and contributions
-
-```powershell
-npm ci
-npm run check
-npm run build
-```
-
-Build output is in `dist/`. Checks cover version consistency, linting, types, JavaScript behavior, PowerShell extraction, and the native operation card. Automated tests are not a guarantee of compatibility with every IMA version.
-
-- [Technical details and known limitations](TECHNICAL.md)
-- [0.1.2 release notes (Chinese)](releases/0.1.2.md)
-- [Security and privacy](../SECURITY.md)
-- [Report an issue or suggest an improvement](https://github.com/oooing/ima-share-sync/issues)
-
-Please include your Windows, Obsidian, and IMA versions, article type, and **redacted** error details. Do not publish private article text, personal data, or credentials.
-
-## License
-
-Code is licensed under the [MIT License](../LICENSE). Product names and brand assets belong to their respective owners.
-
-If the plugin saves you a few rounds of copying and pasting, a **Star** on GitHub is appreciated. Real-world feedback is welcome, too.
+Use npm ci and npm run check in the source checkout. Standard production assets are in dist/. Automated tests cover offline logic and a simulated host; they are not live IMA desktop acceptance.

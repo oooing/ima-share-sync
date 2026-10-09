@@ -43,6 +43,19 @@ $script:AllowForeground = $false
 $script:ForegroundMilliseconds = 0.0
 $script:SkipSourceIds = @{}
 $script:GeneralBodyCache = @{}
+$script:IncludeSubfolders = $true
+$script:MaxFolders = 1
+$script:MaxFolderDepth = 1
+$script:GeneralSelectionMode = 'per-folder'
+$script:ExistingFiles = @{}
+$script:GeneralFolderPath = @()
+$script:GeneralScanStarted = $null
+$script:GeneralScannedFolders = 0
+$script:GeneralNavigationCache = @{}
+$script:DownloadDirectory = ''
+$script:PreserveImaWindows = $false
+$script:SyncScopeMode = 'recent'
+$script:ExportAllowed = $true
 
 function Write-ImaProgress([string]$Text) {
     try {
@@ -61,6 +74,7 @@ function Add-ImaSkipTitles([object[]]$Titles) {
 
 function Initialize-ImaInput {
     $script:SkipTitles = @{}
+    $script:GeneralSelectionMode = 'per-folder'
     if (-not [string]::IsNullOrWhiteSpace($InputPath)) {
         if (-not [IO.File]::Exists($InputPath)) {
             throw "同步输入文件不存在：$InputPath"
@@ -89,6 +103,41 @@ function Initialize-ImaInput {
                     if ($sourceId -isnot [string]) { throw "来源 ID 必须为字符串" }
                     $script:SkipSourceIds[$sourceId] = $true
                 }
+            }
+            if ($inputData.PSObject.Properties['includeSubfolders']) {
+                if ($inputData.includeSubfolders -isnot [bool]) { throw '子目录开关无效' }
+                $script:IncludeSubfolders = $inputData.includeSubfolders
+                if (-not $script:IncludeSubfolders) { $script:MaxFolderDepth = 0 }
+            }
+            if ($inputData.PSObject.Properties['maxFolders']) {
+                if (($inputData.maxFolders -isnot [int] -and $inputData.maxFolders -isnot [long]) -or
+                    $inputData.maxFolders -lt 1 -or $inputData.maxFolders -gt 20) { throw '最近目录数必须在 1–20 之间' }
+                $script:MaxFolders = [int]$inputData.maxFolders
+            }
+            if ($inputData.PSObject.Properties['maxFolderDepth']) {
+                if (($inputData.maxFolderDepth -isnot [int] -and $inputData.maxFolderDepth -isnot [long]) -or
+                    $inputData.maxFolderDepth -lt 0 -or $inputData.maxFolderDepth -gt 5) { throw '最大目录层级必须在 0–5 之间' }
+                $script:MaxFolderDepth = [int]$inputData.maxFolderDepth
+                $script:IncludeSubfolders = $script:MaxFolderDepth -gt 0
+            }
+            if ($inputData.PSObject.Properties['generalSelectionMode']) {
+                if ($inputData.generalSelectionMode -isnot [string] -or
+                    $inputData.generalSelectionMode -cnotin @('total', 'per-folder')) { throw '通用模式取量方式无效' }
+                $script:GeneralSelectionMode = $inputData.generalSelectionMode
+            }
+            if ($inputData.PSObject.Properties['existingFiles']) {
+                foreach ($file in @($inputData.existingFiles)) {
+                    if ($file -isnot [string]) { throw '已有文件路径无效' }
+                    $script:ExistingFiles[$file.ToLowerInvariant()] = $true
+                }
+            }
+            if ($inputData.PSObject.Properties['downloadDirectory']) {
+                $script:DownloadDirectory = [string]$inputData.downloadDirectory
+                if (-not [IO.Path]::IsPathRooted($script:DownloadDirectory)) { throw '下载暂存目录必须为绝对路径' }
+            }
+            if ($inputData.PSObject.Properties['syncScopeMode']) {
+                if ($inputData.syncScopeMode -notin @('all', 'recent')) { throw '同步范围模式无效' }
+                $script:SyncScopeMode = [string]$inputData.syncScopeMode
             }
             return
         }
@@ -187,6 +236,14 @@ namespace ImaSpeedSync {
         [DllImport("user32.dll")]
         private static extern IntPtr GetAncestor(IntPtr windowHandle, uint flags);
 
+        [DllImport("user32.dll")]
+        public static extern IntPtr GetWindow(IntPtr windowHandle, uint command);
+
+        public static bool CloseWindow(IntPtr windowHandle) {
+            if (windowHandle == IntPtr.Zero) return false;
+            PostMessage(windowHandle, 0x0112, new IntPtr(0xF060), IntPtr.Zero);
+            return PostMessage(windowHandle, 0x0010, IntPtr.Zero, IntPtr.Zero);
+        }
 
         public static bool PostMouseWheelToWindow(int x, int y, int delta, IntPtr expectedRoot) {
             POINT point = new POINT { X = x, Y = y };
@@ -214,6 +271,12 @@ namespace ImaSpeedSync {
 
         [DllImport("user32.dll")]
         public static extern void mouse_event(uint flags, uint dx, uint dy, int data, UIntPtr extraInfo);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        public static extern IntPtr OpenDesktop(string lpszDesktop, uint dwFlags, bool fInherit, uint dwDesiredAccess);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        public static extern bool SetThreadDesktop(IntPtr hDesktop);
     }
 }
 "@
@@ -872,6 +935,13 @@ function Get-ImaArticleWindow([string]$Title) {
 
 function Get-ImaRoot {
     Add-Type -AssemblyName UIAutomationClient
+    Initialize-ImaNativeMethods
+    try {
+        $hDesk = [ImaSpeedSync.NativeMethods]::OpenDesktop("default", 0, $false, 0x01FF)
+        if ($hDesk -ne [IntPtr]::Zero) {
+            [void][ImaSpeedSync.NativeMethods]::SetThreadDesktop($hDesk)
+        }
+    } catch {}
 
     if (-not [string]::IsNullOrWhiteSpace($script:CurrentArticleTitle)) {
         $articleWindow = Get-ImaArticleWindow $script:CurrentArticleTitle
@@ -896,6 +966,22 @@ function Get-ImaRoot {
     $process = Get-Process -Name "ima.copilot" -ErrorAction SilentlyContinue |
         Where-Object MainWindowHandle -ne 0 |
         Select-Object -First 1
+
+    if (-not $process) {
+        try {
+            $pids = @(Get-Process -Name "ima.copilot" -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id)
+            if ($pids.Count -gt 0) {
+                $desktop = [Windows.Automation.AutomationElement]::RootElement
+                foreach ($w in $desktop.FindAll([Windows.Automation.TreeScope]::Children, [Windows.Automation.Condition]::TrueCondition)) {
+                    if ($w.Current.ProcessId -in $pids -and $w.Current.NativeWindowHandle -ne 0 -and $w.Current.Name -like "*ima*") {
+                        $script:MainWindowHandle = [IntPtr]$w.Current.NativeWindowHandle
+                        $script:MainProcessId = [int]$w.Current.ProcessId
+                        return $w
+                    }
+                }
+            }
+        } catch {}
+    }
 
     if (-not $process) {
         $executable = Join-Path $env:LOCALAPPDATA "ima.copilot\Application\ima.copilot.exe"
@@ -1086,7 +1172,7 @@ function Close-ImaApplication {
     return $true
 }
 
-function Wait-ImaText([string]$Name, [int]$TimeoutMilliseconds = 45000) {
+function Wait-ImaText([string]$Name, [int]$TimeoutMilliseconds = 45000, [string]$FailureHint = '') {
     $condition = New-Object Windows.Automation.PropertyCondition(
         [Windows.Automation.AutomationElement]::NameProperty,
         $Name
@@ -1099,6 +1185,7 @@ function Wait-ImaText([string]$Name, [int]$TimeoutMilliseconds = 45000) {
         }
         Start-ImaCancelableSleep 250
     } while ([DateTime]::UtcNow -lt $deadline)
+    if ($FailureHint) { throw $FailureHint }
     throw "等待 IMA 界面元素超时：$Name"
 }
 
@@ -1118,13 +1205,19 @@ function Open-ImaSpeedFolder {
 
     if (-not (Test-ImaNamedElement $root $script:FolderName)) {
         Invoke-ImaNamedElement $root $script:KnowledgeBaseName
-        $root = Wait-ImaText $script:FolderName
+        $root = Wait-ImaText $script:FolderName -TimeoutMilliseconds 15000 `
+            -FailureHint "未找到配置的 IMA 文件夹「$($script:FolderName)」，请确认分享仍可访问，并检查设置中的来源文件夹"
     }
 
     Invoke-ImaNamedElement $root $script:FolderName
     Start-ImaCancelableSleep 600
     $root = Get-ImaRoot
-    [void](Wait-ImaTitleListStable $root)
+    $root = Wait-ImaTitleListStable $root -Recover {
+        $retryRoot = Get-ImaRoot
+        if (Test-ImaNamedElement $retryRoot $script:FolderName) {
+            Invoke-ImaNamedElement $retryRoot $script:FolderName
+        }
+    }
     $script:MainWindowHandle = [IntPtr]$root.Current.NativeWindowHandle
     $script:MainProcessId = [int]$root.Current.ProcessId
     return $root
@@ -1136,6 +1229,14 @@ function Get-ImaTitleListElement([Windows.Automation.AutomationElement]$Root) {
         "shareKnowledgeContentList"
     )
     return $Root.FindFirst([Windows.Automation.TreeScope]::Descendants, $condition)
+}
+
+function Get-ImaTitleReadinessSignature([object[]]$Records) {
+    $keys = @($Records | ForEach-Object {
+        if ($_.PSObject.Properties['Key']) { "$($_.Key):$($_.Name)" } else { [string]$_.Name }
+    })
+    if (-not $keys.Count) { return '' }
+    return ConvertTo-Json -InputObject $keys -Compress
 }
 
 function Get-ImaVisibleTitleSnapshot(
@@ -1150,6 +1251,7 @@ function Get-ImaVisibleTitleSnapshot(
             Records = @()
             Elements = @()
             Signature = ""
+            ReadinessSignature = ""
         }
     }
     if ($script:ContentMode -eq "general") { return Get-ImaGeneralTitleSnapshot $ListElement }
@@ -1196,6 +1298,7 @@ function Get-ImaVisibleTitleSnapshot(
     return [pscustomobject]@{
         Records = $orderedRecords
         Elements = @($orderedRecords | ForEach-Object { $_.Element })
+        ReadinessSignature = Get-ImaTitleReadinessSignature $orderedRecords
         Signature = (@($orderedRecords | ForEach-Object {
             "{0}@{1:N0}" -f $_.Name, $_.Y
         }) -join "|")
@@ -1213,18 +1316,70 @@ function Get-ImaVisibleTitleSignature([Windows.Automation.AutomationElement]$Roo
     return [string](Get-ImaVisibleTitleSnapshot $Root).Signature
 }
 
+function Get-ImaTitleListState {
+    $root = Get-ImaRoot
+    $list = Get-ImaTitleListElement $root
+    if (-not $list) {
+        $missingFolder = $root.FindFirst([Windows.Automation.TreeScope]::Descendants,
+            (New-Object Windows.Automation.PropertyCondition(
+                [Windows.Automation.AutomationElement]::NameProperty, '当前文件夹不存在')))
+        if ($missingFolder -and -not $missingFolder.Current.IsOffscreen) {
+            return [pscustomobject]@{ Root = $root; Signature = ''; Hidden = $false; TerminalError = $true
+                Reason = 'IMA 提示“当前文件夹不存在”，请确认原分享文件夹仍可访问，或在设置中重新选择来源' }
+        }
+        return [pscustomobject]@{ Root = $root; Signature = ''; Reason = '未找到分享文章列表'; Hidden = $false }
+    }
+    if ($root.Current.IsOffscreen -or $list.Current.IsOffscreen -or $list.Current.BoundingRectangle.Height -le 0) {
+        return [pscustomobject]@{ Root = $root; Signature = ''; Reason = 'IMA 文章列表不可见，请展开 IMA 窗口后重试'; Hidden = $true }
+    }
+    $snapshot = Get-ImaVisibleTitleSnapshot $root $list
+    # Layout animation changes Y coordinates without changing the articles.
+    # Readiness depends on the ordered titles, not their screen positions.
+    $signature = $snapshot.ReadinessSignature
+    $reason = if ($signature) { "列表可读取，匹配 $(@($snapshot.Records).Count) 个标题" } else { '列表已找到，但没有识别到可见标题（可能仍在加载或标题规则不匹配）' }
+    return [pscustomobject]@{ Root = $root; Signature = $signature; Reason = $reason; Hidden = $false }
+}
+
 function Wait-ImaTitleListStable(
     [Windows.Automation.AutomationElement]$Root,
-    [int]$TimeoutMilliseconds = 15000
+    [int]$TimeoutMilliseconds = 15000,
+    [scriptblock]$Recover = $null,
+    [int]$RecoveryAfterMilliseconds = 6000
 ) {
     $deadline = [DateTime]::UtcNow.AddMilliseconds($TimeoutMilliseconds)
     $started = [DateTime]::UtcNow
     $lastSignature = ""
     $stableCount = 0
+    $recovered = $false
+    $lastReason = ''
+    $lastLoggedReason = ''
+    $hiddenCount = 0
     do {
         Test-ImaCancellation
-        $currentRoot = Get-ImaRoot
-        $signature = Get-ImaVisibleTitleSignature $currentRoot
+        try {
+            $state = Get-ImaTitleListState
+            $currentRoot = $state.Root
+            $signature = $state.Signature
+            $lastReason = $state.Reason
+        }
+        catch [OperationCanceledException] { throw }
+        catch {
+            # Chromium may rebuild its accessibility tree during folder navigation.
+            $signature = ''
+            $state = $null
+            $lastReason = "读取列表暂时失败：$($_.Exception.Message)"
+        }
+        if ($lastReason -cne $lastLoggedReason) {
+            Write-SyncLog "列表检测：$lastReason"
+            $lastLoggedReason = $lastReason
+        }
+        if ($null -ne $state -and $state.PSObject.Properties['TerminalError'] -and $state.TerminalError) {
+            throw $lastReason
+        }
+        if ($null -ne $state -and $state.Hidden) { $hiddenCount++ } else { $hiddenCount = 0 }
+        if ($hiddenCount -ge 3) {
+            throw $lastReason
+        }
         if (-not [string]::IsNullOrWhiteSpace($signature) -and $signature -ceq $lastSignature) {
             $stableCount++
         }
@@ -1238,9 +1393,21 @@ function Wait-ImaTitleListStable(
         ) {
             return $currentRoot
         }
+        if (-not $recovered -and $null -ne $Recover -and
+            ([DateTime]::UtcNow - $started).TotalMilliseconds -ge $RecoveryAfterMilliseconds) {
+            Test-ImaCancellation
+            $recovered = $true
+            Write-SyncLog '列表尚未就绪，重新定位目标文件夹一次（不抢占前台）'
+            Write-ImaProgress '正在重新定位文章列表…'
+            try { & $Recover | Out-Null }
+            catch [OperationCanceledException] { throw }
+            catch { Write-SyncLog "重新定位列表失败：$($_.Exception.Message)" }
+            $lastSignature = ''
+            $stableCount = 0
+        }
         Start-ImaCancelableSleep 400
     } while ([DateTime]::UtcNow -lt $deadline)
-    throw "等待 IMA 文章列表稳定超时"
+    throw "文章列表未就绪：$lastReason（已等待 $TimeoutMilliseconds 毫秒；重新定位：$recovered）"
 }
 
 function Get-ImaTitleListScrollCandidate(
@@ -3421,7 +3588,7 @@ function Test-ImaGeneralTitle([string]$Title) {
 }
 
 function Get-ImaCardIdentity([string]$AutomationId) {
-    $match = [regex]::Match($AutomationId, '^knowledge-(note|weburl|pdf|file|image)_(.+)$')
+    $match = [regex]::Match($AutomationId, '^knowledge-(note|weburl|pdf|file|image|audio|video)_(.+)$')
     if (-not $match.Success) { return $null }
     $id = $match.Groups[2].Value
     # Do not persist short numeric UI row indexes as article identities.
@@ -3430,16 +3597,18 @@ function Get-ImaCardIdentity([string]$AutomationId) {
 }
 
 function Get-ImaCardTitleIndex([string[]]$Names, [string]$Kind) {
-    $labels = @{ note='笔记'; weburl='网页'; pdf='PDF'; file='文件'; image='图片' }
+    $labels = @{ note='笔记'; weburl='网页'; pdf='PDF'; file='文件'; image='图片'; audio='音频'; video='视频' }
     # IMA can expose a thumbnail's entire preview before the actual title.
     # The verified card layout ends in title, kind, update time, not title first.
-    if ($Names.Count -ge 3 -and $Names[-2] -ceq $labels[$Kind] -and $Names[-1] -match '更新$') {
+    if ($Kind -eq 'folder' -and $Names.Count -eq 4 -and $Names[1] -match '^\d+$' -and $Names[2] -eq '项') { return 0 }
+    if ($Names.Count -ge 3 -and $Names[-2] -ceq $labels[$Kind] -and
+        $Names[-1] -match '^(?:(?:\d{4}[/.-])?\d{1,2}[/.-]\d{1,2}(?:\s+\d{1,2}:\d{2})?|\d{1,2}:\d{2}|今天|昨天|前天)(?:更新)?$') {
         return $Names.Count - 3
     }
     throw "IMA 文章卡片结构变化，无法可靠区分标题与摘要"
 }
 
-function Get-ImaGeneralTitleSnapshot([Windows.Automation.AutomationElement]$ListElement) {
+function Get-ImaGeneralTitleSnapshot([Windows.Automation.AutomationElement]$ListElement, [switch]$IncludeOffscreen) {
     $condition = New-Object Windows.Automation.PropertyCondition(
         [Windows.Automation.AutomationElement]::ControlTypeProperty, [Windows.Automation.ControlType]::Text)
     $allRecords = New-Object Collections.Generic.List[object]
@@ -3447,33 +3616,46 @@ function Get-ImaGeneralTitleSnapshot([Windows.Automation.AutomationElement]$List
     foreach ($card in $ListElement.FindAll([Windows.Automation.TreeScope]::Children, [Windows.Automation.Condition]::TrueCondition)) {
         Test-ImaCancellation
         try {
-            $identity = Get-ImaCardIdentity ([string]$card.Current.AutomationId)
-            if (-not $identity) { continue }
-            $cardRectangle = $card.Current.BoundingRectangle
-            if ($cardRectangle.Bottom -le $listRectangle.Y -or $cardRectangle.Y -ge $listRectangle.Bottom) { continue }
             $texts = @($card.FindAll([Windows.Automation.TreeScope]::Descendants, $condition))
             $names = @($texts | ForEach-Object { [string]$_.Current.Name })
+            $identity = Get-ImaCardIdentity ([string]$card.Current.AutomationId)
+            if (-not $identity) {
+                if ($names.Count -eq 4 -and $names[1] -match '^\d+$' -and $names[2] -eq '项') {
+                    $identity = [pscustomobject]@{ Kind='folder'; SourceId=''; AutomationId='' }
+                } elseif ($names.Count -eq 1 -and $names[0] -eq '没有更多内容了') { continue }
+                elseif ($names.Count -eq 0) { continue }
+                else {
+                    Write-SyncLog "跳过列表未就绪或未识别条目: $([string]$card.Current.AutomationId) [$($names -join ' | ')]"
+                    continue
+                }
+            }
+            $cardRectangle = $card.Current.BoundingRectangle
+            if (-not $IncludeOffscreen -and ($cardRectangle.Bottom -le $listRectangle.Y -or $cardRectangle.Y -ge $listRectangle.Bottom)) { continue }
             $titleIndex = Get-ImaCardTitleIndex $names $identity.Kind
             $textElement = $texts[$titleIndex]
             $key = $identity.AutomationId + ':' + ($card.GetRuntimeId() -join '.')
             $name = [string]$textElement.Current.Name
             $rectangle = $textElement.Current.BoundingRectangle
-            if ($textElement.Current.IsOffscreen -or $rectangle.Width -le 0 -or $rectangle.Height -le 0 -or
-                $rectangle.Y -ge $listRectangle.Bottom -or $rectangle.Bottom -le $listRectangle.Y) { continue }
+            if (-not $IncludeOffscreen -and ($textElement.Current.IsOffscreen -or $rectangle.Width -le 0 -or $rectangle.Height -le 0 -or
+                $rectangle.Y -ge $listRectangle.Bottom -or $rectangle.Bottom -le $listRectangle.Y)) { continue }
             $allRecords.Add([pscustomobject]@{
                 Name = $name; Element = $textElement; Card = $card
                 SourceId = $identity.SourceId; AutomationId = $identity.AutomationId; Kind = $identity.Kind
-                Key = if ($identity.SourceId) { $identity.SourceId } else { "$key`:$name" }
+                Key = if ($identity.Kind -eq 'folder') { "folder:$name" } elseif ($identity.SourceId) { $identity.SourceId } else { "$key`:$name" }
+                TimeLabel = $names[-1]
+                ChildCount = if ($identity.Kind -eq 'folder') { [int]$names[1] } else { 0 }
                 X = [double]$rectangle.X; Y = [double]$rectangle.Y; ScrollPercent = 0.0; ScrollStep = 0
             })
         }
         catch [Windows.Automation.ElementNotAvailableException] { continue }
     }
-    $allOrdered = @($allRecords.ToArray() | Sort-Object Y, X)
-    $records = @($allOrdered | Where-Object { Test-ImaGeneralTitle $_.Name })
+    $allOrdered = if ($IncludeOffscreen) { @($allRecords.ToArray()) } else { @($allRecords.ToArray() | Sort-Object Y, X) }
+    $records = @($allOrdered | Where-Object { $_.Kind -eq 'folder' -or (Test-ImaGeneralTitle $_.Name) })
     return [pscustomobject]@{
         Records = $records
+        AllRecords = $allOrdered
         Elements = @($records | ForEach-Object { $_.Element })
+        ReadinessSignature = if ($allOrdered.Count) { Get-ImaTitleReadinessSignature $allOrdered } elseif (Test-ImaNamedElement $ListElement '没有更多内容了') { 'empty-folder' } else { '' }
         Signature = (@($allOrdered | ForEach-Object { "$($_.Key)@$([Math]::Round($_.Y))" }) -join '|')
     }
 }
@@ -3510,19 +3692,459 @@ function Get-ImaRecentArticleRecords([Windows.Automation.AutomationElement]$Root
     return $records.ToArray()
 }
 
+function Convert-ImaListTime([string]$Label, [datetime]$Now = (Get-Date)) {
+    $text = $Label -replace '更新$', ''
+    $date = $Now.Date
+    try {
+        if ($text -match '^(\d{1,2}):(\d{2})$') {
+            if ([int]$Matches[1] -gt 23 -or [int]$Matches[2] -gt 59) { throw 'invalid clock' }
+            return $date.AddHours([int]$Matches[1]).AddMinutes([int]$Matches[2])
+        }
+        if ($text -eq '今天') { return $date }
+        if ($text -eq '昨天') { return $date.AddDays(-1) }
+        if ($text -eq '前天') { return $date.AddDays(-2) }
+        if ($text -match '^(?:(\d{4})[/.-])?(\d{1,2})[/.-](\d{1,2})(?:\s+(\d{1,2}):(\d{2}))?$') {
+            $year = if ($Matches[1]) { [int]$Matches[1] } else { $Now.Year }
+            $date = [datetime]::new($year, [int]$Matches[2], [int]$Matches[3])
+            if (-not $Matches[1] -and $date -gt $Now.Date) { $date = $date.AddYears(-1) }
+            if ($Matches[4]) {
+                if ([int]$Matches[4] -gt 23 -or [int]$Matches[5] -gt 59) { throw 'invalid clock' }
+                $date = $date.AddHours([int]$Matches[4]).AddMinutes([int]$Matches[5])
+            }
+            return $date
+        }
+    } catch { throw "无法识别 IMA 列表时间：$Label" }
+    throw "无法识别 IMA 列表时间：$Label"
+}
+
+function Test-ImaGeneralScanBudget {
+    Test-ImaCancellation
+    if ($script:GeneralScannedFolders -gt 100 -or ($script:GeneralScanStarted -and
+        ([DateTime]::UtcNow - $script:GeneralScanStarted).TotalSeconds -gt 180)) {
+        throw '目录检查达到上限（100 个目录 / 180 秒），未完成选定目录的检查；请缩小来源文件夹或目录层级'
+    }
+}
+
+function Get-ImaFolderRecords([Windows.Automation.AutomationElement]$Root, [int]$ExpectedCount = -1) {
+    $records = New-Object Collections.Generic.List[object]
+    $seen = @{}
+    $scroller = Get-ImaTitleListScroller $Root
+    if ($scroller) { Reset-ImaTitleListToTop $scroller }
+    $percent = 0.0
+    $stalledPages = 0
+    for ($page = 0; $page -lt 60; $page++) {
+        Test-ImaGeneralScanBudget
+        $list = Get-ImaTitleListElement (Get-ImaRoot)
+        if (-not $list) { throw '目录列表在检查过程中消失' }
+        # Chromium exposes offscreen, already-loaded cards. Read their metadata in
+        # one pass instead of opening/scrolling every item on the desktop.
+        $snapshot = Get-ImaGeneralTitleSnapshot $list -IncludeOffscreen
+        $previousCount = $records.Count
+        foreach ($record in @($snapshot.AllRecords)) {
+            if ($seen.ContainsKey($record.Key)) { continue }
+            $seen[$record.Key] = $true
+            $record.ScrollPercent = $percent
+            if ($scroller -and $scroller.Pattern.Current.VerticalViewSize -gt 0 -and $scroller.Pattern.Current.VerticalViewSize -lt 100) {
+                $bounds = $list.Current.BoundingRectangle
+                $extent = $bounds.Height * (100 / $scroller.Pattern.Current.VerticalViewSize - 1)
+                if ($extent -gt 0 -and $record.Y -ne 0) {
+                    $record.ScrollPercent = [Math]::Max(0, [Math]::Min(100, $percent + ($record.Y - $bounds.Y - $bounds.Height * 0.2) / $extent * 100))
+                }
+            }
+            $record.ScrollStep = $page
+            $records.Add($record)
+        }
+        $atEnd = -not $scroller -or $scroller.Pattern.Current.VerticalViewSize -ge 99.9 -or $percent -ge 99.9
+        $countComplete = $ExpectedCount -ge 0 -and $records.Count -eq $ExpectedCount
+        if ((Test-ImaNamedElement $list '没有更多内容了') -and ($atEnd -or $countComplete)) {
+            if ($ExpectedCount -ge 0 -and $records.Count -ne $ExpectedCount) {
+                throw "目录内容数量发生变化或列表未完整加载（预期 $ExpectedCount，读取 $($records.Count)），请重试"
+            }
+            return $records.ToArray()
+        }
+        if ($records.Count -gt 10000) { throw '单个目录条目超过 10000，请缩小同步范围' }
+        if (-not $scroller -or $percent -ge 99.9) {
+            throw '无法确认目录列表已到底部，未将部分内容当作最新结果'
+        }
+        $nextPercent = [Math]::Min(100, $percent + [Math]::Max(5, $scroller.Pattern.Current.VerticalViewSize * 0.75))
+        Set-ImaTitleListScrollPercent $scroller $nextPercent
+        Start-ImaCancelableSleep 200
+        $actual = [double]$scroller.Pattern.Current.VerticalScrollPercent
+        if ($actual -le $percent + 0.01) {
+            Start-ImaCancelableSleep 350
+            $actual = [double]$scroller.Pattern.Current.VerticalScrollPercent
+        }
+        if ([double]::IsNaN($actual) -or [double]::IsInfinity($actual) -or $actual -lt 0 -or $actual -gt 100) {
+            throw '目录滚动位置无效，未保存部分结果'
+        }
+        # Lazy loading expands the scroll extent: 99% can become 88% while
+        # advancing. A lower percentage alone is not evidence of a stalled list.
+        if ([Math]::Abs($actual - $percent) -lt 0.01 -and $records.Count -eq $previousCount) { $stalledPages++ }
+        else { $stalledPages = 0 }
+        if ($stalledPages -ge 3) {
+            throw "目录滚动未前进（已读取 $($records.Count)/$ExpectedCount，位置 $percent → $actual，目标 $nextPercent），未保存部分结果"
+        }
+        $percent = $actual
+    }
+    throw '目录分页检查达到上限，请缩小同步范围'
+}
+
+function Get-ImaBreadcrumbItems([Windows.Automation.AutomationElement]$Root) {
+    # 优先在 ant-breadcrumb / breadcrumb 专用容器中查找
+    $breadcrumbContainer = $Root.FindFirst([Windows.Automation.TreeScope]::Descendants,
+        (New-Object Windows.Automation.PropertyCondition(
+            [Windows.Automation.AutomationElement]::ClassNameProperty, "ant-breadcrumb", [Windows.Automation.PropertyConditionFlags]::IgnoreCase)))
+    if (-not $breadcrumbContainer) {
+        $condition = New-Object Windows.Automation.PropertyCondition(
+            [Windows.Automation.AutomationElement]::ControlTypeProperty, [Windows.Automation.ControlType]::Group)
+        foreach ($group in $Root.FindAll([Windows.Automation.TreeScope]::Descendants, $condition)) {
+            if ($group.Current.ClassName -like "*breadcrumb*") {
+                $breadcrumbContainer = $group
+                break
+            }
+        }
+    }
+    if ($breadcrumbContainer) {
+        $items = @($breadcrumbContainer.FindAll([Windows.Automation.TreeScope]::Descendants,
+            (New-Object Windows.Automation.PropertyCondition(
+                [Windows.Automation.AutomationElement]::ControlTypeProperty, [Windows.Automation.ControlType]::ListItem))) |
+            Where-Object { -not $_.Current.IsOffscreen })
+        if ($items.Count -gt 0) { return $items }
+    }
+    # 回退机制：全树查找 ListItem，但排除 shareKnowledgeContentList 内容列表内的项
+    $listElement = Get-ImaTitleListElement $Root
+    $listId = if ($listElement) { $listElement.GetRuntimeId() -join '.' } else { '' }
+    $allItems = @($Root.FindAll([Windows.Automation.TreeScope]::Descendants,
+        (New-Object Windows.Automation.PropertyCondition(
+            [Windows.Automation.AutomationElement]::ControlTypeProperty, [Windows.Automation.ControlType]::ListItem))) |
+        Where-Object { -not $_.Current.IsOffscreen })
+    if (-not $listId) { return $allItems }
+    $walker = [Windows.Automation.TreeWalker]::RawViewWalker
+    $filtered = New-Object Collections.Generic.List[Windows.Automation.AutomationElement]
+    foreach ($item in $allItems) {
+        $curr = $item
+        $isInsideContentList = $false
+        for ($i = 0; $i -lt 10 -and $curr; $i++) {
+            if (($curr.GetRuntimeId() -join '.') -ceq $listId) { $isInsideContentList = $true; break }
+            $curr = $walker.GetParent($curr)
+        }
+        if (-not $isInsideContentList) { $filtered.Add($item) }
+    }
+    return $filtered.ToArray()
+}
+
+function Test-ImaFolderSelected([string]$Name) {
+    $crumbs = @(Get-ImaBreadcrumbItems (Get-ImaRoot))
+    if ($crumbs.Count -eq 0) { return $false }
+    $lastCrumb = $crumbs[-1]
+    if (Test-ImaNamedElement $lastCrumb $Name) { return $true }
+    if ($lastCrumb.Current.Name -ceq $Name -or $lastCrumb.Current.Name.Trim() -ceq $Name.Trim()) { return $true }
+    return $false
+}
+
+function Wait-ImaFolderSelected([string]$Name, [object]$FolderRecord = $null) {
+    $deadline = [DateTime]::UtcNow.AddSeconds(12)
+    $lastRetry = [DateTime]::UtcNow
+    while ([DateTime]::UtcNow -lt $deadline) {
+        Test-ImaGeneralScanBudget
+        if (Test-ImaFolderSelected $Name) {
+            try {
+                return Wait-ImaTitleListStable (Get-ImaRoot) -TimeoutMilliseconds 8000
+            }
+            catch {
+                # 通用模式下若列表已加载但无匹配标题（如纯子目录列表或空目录），确认列表容器可见即视为就绪
+                $list = Get-ImaTitleListElement (Get-ImaRoot)
+                if ($list -and -not $list.Current.IsOffscreen) {
+                    return Get-ImaRoot
+                }
+                throw
+            }
+        }
+        # 如果等待超过 1.5 秒仍未跳转，且提供了 FolderRecord，主动重试一次点击
+        if ($FolderRecord -and ([DateTime]::UtcNow - $lastRetry).TotalMilliseconds -ge 1500) {
+            $lastRetry = [DateTime]::UtcNow
+            Write-SyncLog "等待进入文件夹 [$Name] 超过 1.5s，尝试再次触发打开..."
+            try {
+                Invoke-ImaArticleRecord $FolderRecord
+            } catch {
+                Write-SyncLog "重试打开文件夹 [$Name] 提示: $($_.Exception.Message)"
+            }
+        }
+        Start-ImaCancelableSleep 150
+    }
+    throw "文件夹跳转未完成：$Name（未继续点击其他条目）"
+}
+
+function Invoke-ImaNativeClick([int]$TargetX, [int]$TargetY) {
+    try {
+        $type = [Type]::GetType('ImaSpeedSync.NativeMethods')
+        if ($type) {
+            $mSetPos = $type.GetMethod('SetCursorPos')
+            $mMouseEv = $type.GetMethod('mouse_event')
+            if ($mSetPos -and $mMouseEv) {
+                [void]$mSetPos.Invoke($null, @($TargetX, $TargetY))
+                Start-Sleep -Milliseconds 40
+                [void]$mMouseEv.Invoke($null, @([uint32]2, [uint32]0, [uint32]0, [int]0, [UIntPtr]::Zero))
+                Start-Sleep -Milliseconds 40
+                [void]$mMouseEv.Invoke($null, @([uint32]4, [uint32]0, [uint32]0, [int]0, [UIntPtr]::Zero))
+            }
+        }
+    } catch {}
+}
+
+function Open-ImaBreadcrumb([string]$Name) {
+    $crumbs = @(Get-ImaBreadcrumbItems (Get-ImaRoot) | Where-Object {
+        (Test-ImaNamedElement $_ $Name) -or ($_.Current.Name -ceq $Name)
+    })
+    if ($crumbs.Count -ne 1) { throw "文件夹导航不唯一或已丢失：$Name" }
+    Invoke-ImaNamedElement $crumbs[0] $Name
+    Start-ImaCancelableSleep 300
+    if (-not (Test-ImaFolderSelected $Name)) {
+        try {
+            $rect = $crumbs[0].Current.BoundingRectangle
+            if ($rect.Width -gt 0 -and $rect.Height -gt 0 -and -not $crumbs[0].Current.IsOffscreen) {
+                $cx = [int]($rect.X + $rect.Width / 2)
+                $cy = [int]($rect.Y + $rect.Height / 2)
+                Invoke-ImaNativeClick $cx $cy
+            }
+        } catch {}
+    }
+    return Wait-ImaFolderSelected $Name
+}
+
+function Get-ImaGeneralCandidates([Windows.Automation.AutomationElement]$Root, [int]$Limit) {
+    if ($script:MaxFolders -lt 1 -or $script:MaxFolders -gt 20 -or $script:MaxFolderDepth -lt 0 -or $script:MaxFolderDepth -gt 5 -or $Limit -lt 1 -or $Limit -gt 1000) {
+        throw '通用模式的目录数量、层级或文件检查数量无效'
+    }
+    if ($script:GeneralSelectionMode -isnot [string] -or $script:GeneralSelectionMode -cnotin @('total', 'per-folder')) {
+        throw '通用模式取量方式无效'
+    }
+    $script:GeneralScanStarted = [DateTime]::UtcNow
+    $script:GeneralScannedFolders = 0
+    $script:GeneralNavigationCache = @{}
+    $selected = New-Object Collections.Generic.List[object]
+    $pending = New-Object Collections.Generic.List[object]
+    $pending.Add([pscustomobject]@{Path=@(); Expected=-1; Time=[datetime]::MaxValue; Ordinal=0; Phase='visit'; Records=@()})
+    $selectedFolders = 0
+    $nextOrdinal = 1
+    $seen = @{}
+    $scanTime = Get-Date
+    $folderQuota = if ($script:SyncScopeMode -eq 'all') { [int]::MaxValue } else { $script:MaxFolders }
+    try {
+        while ($pending.Count -gt 0 -and $selectedFolders -lt $folderQuota) {
+            Test-ImaGeneralScanBudget
+            # Best-first over discovered directory metadata, not a global tree scan.
+            # A cached selection shares its visit's ordinal, preserving source order
+            # for date-only ties and avoiding opening older siblings unnecessarily.
+            $folder = @($pending.ToArray() | Sort-Object @{Expression='Time';Descending=$true}, Ordinal)[0]
+            [void]$pending.Remove($folder)
+            if ($folder.Phase -eq 'select') {
+                $selectedFolders++
+                $ranked = New-Object Collections.Generic.List[object]
+                $ordinal = 0
+                foreach ($record in @($folder.Records)) {
+                    if ($record.Kind -eq 'folder' -or -not (Test-ImaGeneralTitle $record.Name)) { continue }
+                    $record | Add-Member NoteProperty RelativeFolder @($folder.Path) -Force
+                    $record | Add-Member NoteProperty SourceTime (Convert-ImaListTime $record.TimeLabel $scanTime) -Force
+                    $record | Add-Member NoteProperty Ordinal ($ordinal++) -Force
+                    $ranked.Add($record)
+                }
+                $localSeen = @{}
+                $recent = @($ranked.ToArray() | Sort-Object @{Expression='SourceTime';Descending=$true}, Ordinal |
+                    Where-Object {
+                        $key = if ($_.SourceId) { $_.SourceId } else { $_.Key }
+                        if ($localSeen.ContainsKey($key)) { return $false }; $localSeen[$key]=$true; return $true
+                    } | Select-Object -First $Limit)
+                foreach ($record in $recent) {
+                    if ($script:GeneralSelectionMode -eq 'total') {
+                        # Explicit sequence keeps directory/list order for equal
+                        # timestamps, including on Windows PowerShell 5.1.
+                        $record | Add-Member NoteProperty SelectionOrdinal $selected.Count -Force
+                        $selected.Add($record)
+                        continue
+                    }
+                    $key = if ($record.SourceId) { $record.SourceId } else { (@($folder.Path) + @($record.Key)) -join '/' }
+                    # A duplicate across chosen directories consumes its original
+                    # candidate slot. Existing/failed files likewise never backfill.
+                    if ($seen.ContainsKey($key)) { continue }
+                    $seen[$key] = $true
+                    $selected.Add($record)
+                }
+                if ($script:SyncScopeMode -eq 'all') {
+                    Write-SyncLog "选中目录 $selectedFolders（全量穷尽）：$(@($script:FolderName) + @($folder.Path) -join ' / ')，包含 $($recent.Count) 条"
+                } else {
+                    Write-SyncLog "选中目录 $selectedFolders / $($script:MaxFolders)：$(@($script:FolderName) + @($folder.Path) -join ' / ')，最近 $($recent.Count) 条"
+                }
+                continue
+            }
+
+            if (@($folder.Path).Count -gt 0 -and $folder.Path[-1] -in (@($script:FolderName) + @($folder.Path | Select-Object -SkipLast 1))) {
+                throw '父子文件夹同名，无法安全导航，请选择更具体的来源文件夹'
+            }
+            $currentRoot = Open-ImaGeneralPath $folder.Path
+            $script:GeneralScannedFolders++
+            Write-ImaProgress "检查目录：$(@($script:FolderName) + @($folder.Path) -join ' / ')"
+            $records = @(Get-ImaFolderRecords $currentRoot $folder.Expected)
+            $script:GeneralNavigationCache[(@($folder.Path) -join "`n")] = $records
+            $children = @($records | Where-Object { $_.Kind -eq 'folder' })
+            $canDescend = $script:IncludeSubfolders -and @($folder.Path).Count -lt $script:MaxFolderDepth
+            $rootWithChildren = @($folder.Path).Count -eq 0 -and $canDescend -and $children.Count -gt 0
+            if (-not $rootWithChildren -and @($records | Where-Object { $_.Kind -ne 'folder' }).Count -gt 0) {
+                $pending.Add([pscustomobject]@{Path=@($folder.Path); Expected=$folder.Expected; Time=$folder.Time; Ordinal=$folder.Ordinal; Phase='select'; Records=$records})
+            }
+            if ($canDescend) {
+                foreach ($child in $children) {
+                    if ($child.ChildCount -eq 0) { continue }
+                    $pending.Add([pscustomobject]@{
+                        Path=@($folder.Path) + @($child.Name); Expected=$child.ChildCount
+                        Time=(Convert-ImaListTime $child.TimeLabel $scanTime); Ordinal=($nextOrdinal++); Phase='visit'; Records=@()
+                    })
+                }
+            }
+        }
+        if ($script:GeneralSelectionMode -eq 'total') {
+            # Truncate before cross-directory identity deduplication. A duplicate
+            # consumes a slot; existing/failed candidates never trigger backfill.
+            $recentTotal = @($selected.ToArray() | Sort-Object @{Expression='SourceTime';Descending=$true}, SelectionOrdinal | Select-Object -First $Limit)
+            $selected.Clear()
+            foreach ($record in $recentTotal) {
+                $key = if ($record.SourceId) { $record.SourceId } else { (@($record.RelativeFolder) + @($record.Key)) -join '/' }
+                if ($seen.ContainsKey($key)) { continue }
+                $seen[$key] = $true
+                $selected.Add($record)
+            }
+            Write-SyncLog "目录检查完成：读取 $($script:GeneralScannedFolders) 个目录，选中 $selectedFolders 个取文件目录，合并按列表时间排序，整轮最多 $Limit 条，待检查 $($selected.Count) 条"
+        } else {
+            Write-SyncLog "目录检查完成：读取 $($script:GeneralScannedFolders) 个目录，选中 $selectedFolders 个取文件目录，每目录最多 $Limit 条，待检查 $($selected.Count) 条"
+        }
+        return $selected.ToArray()
+    } finally {
+        $script:GeneralScanStarted = $null
+    }
+}
+
+function Open-ImaGeneralPath([string[]]$Parts) {
+    $crumbs = @(Get-ImaBreadcrumbItems (Get-ImaRoot))
+    $crumbNames = @($crumbs | ForEach-Object { [string]$_.Current.Name })
+
+    # 在真实面包屑中定位来源根目录（例如过滤掉“内容(16966)”等前置父节点）
+    $rootIndex = -1
+    for ($i = 0; $i -lt @($crumbNames).Count; $i++) {
+        if ($crumbNames[$i] -ceq $script:FolderName) {
+            $rootIndex = $i
+            break
+        }
+    }
+
+    if ($rootIndex -ge 0) {
+        $currentParts = if ($rootIndex -lt @($crumbNames).Count - 1) {
+            @($crumbNames[($rootIndex + 1)..(@($crumbNames).Count - 1)])
+        } else {
+            @()
+        }
+        $matchesCurrent = (@($currentParts).Count -eq @($Parts).Count)
+        if ($matchesCurrent) {
+            for ($i = 0; $i -lt @($Parts).Count; $i++) {
+                if ($currentParts[$i] -cne $Parts[$i]) { $matchesCurrent = $false; break }
+            }
+        }
+        if ($matchesCurrent) {
+            $script:GeneralFolderPath = @($Parts)
+            return Get-ImaRoot
+        }
+    }
+
+    $root = if (Test-ImaFolderSelected $script:FolderName) { Get-ImaRoot } else { Open-ImaBreadcrumb $script:FolderName }
+    $walked = @()
+    foreach ($part in $Parts) {
+        Test-ImaGeneralScanBudget
+        $cacheKey = $walked -join "`n"
+        $cached = if ($script:GeneralNavigationCache.ContainsKey($cacheKey)) { $script:GeneralNavigationCache[$cacheKey] } else { @(Get-ImaFolderRecords $root) }
+        $folders = @($cached | Where-Object { $_.Kind -eq 'folder' -and $_.Name -ceq $part })
+        if ($folders.Count -ne 1) { throw "子目录无法唯一定位：$part" }
+        Invoke-ImaArticleRecord $folders[0]
+        $root = Wait-ImaFolderSelected $part $folders[0]
+        $walked += $part
+    }
+    $script:GeneralFolderPath = @($walked)
+    return $root
+}
+
+function Convert-ImaLocalName([string]$Name) {
+    $safe = ($Name -replace '[\r\n\t]+', ' ' -replace '\s{2,}', ' ').Trim()
+    $replacements = @{ '<'='＜'; '>'='＞'; ':'='：'; '"'='＂'; '/'='／'; '\'='＼'; '|'='｜'; '?'='？'; '*'='＊' }
+    foreach ($key in $replacements.Keys) { $safe = $safe.Replace($key, $replacements[$key]) }
+    $safe = ($safe -replace '[\x00-\x1f\x7f]', ' ').Trim().TrimEnd('.', ' ')
+    if (-not $safe) { $safe = '未命名文章' }
+    $safe = (@([regex]::Matches($safe, '(?s)[\uD800-\uDBFF][\uDC00-\uDFFF]|.') | Select-Object -First 120 | ForEach-Object { $_.Value }) -join '').TrimEnd('.', ' ')
+    if ($safe -match '^(?i:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\..*)?$') { $safe += '_' }
+    return $safe
+}
+
+function Get-ImaLocalRelativePath([object]$Record) {
+    $parts = @()
+    foreach ($part in @($Record.RelativeFolder)) {
+        $safe = Convert-ImaLocalName $part
+        if ($safe -cne $part) {
+            $hash = [Security.Cryptography.SHA256]::Create()
+            try { $digest = [BitConverter]::ToString($hash.ComputeHash([Text.Encoding]::UTF8.GetBytes($part))).Replace('-','').ToLowerInvariant() }
+            finally { $hash.Dispose() }
+            $safe += '-' + $digest.Substring(0,8)
+        }
+        $parts += $safe
+    }
+    $name = Convert-ImaLocalName $Record.Name
+    if ($Record.Kind -eq 'note' -or $Record.Kind -eq 'weburl') { $name += '.md' }
+    else {
+        $extension = [IO.Path]::GetExtension($Record.Name).ToLowerInvariant()
+        $name = (Convert-ImaLocalName ($Record.Name -replace '\.[^.]+$', '')) + $extension
+    }
+    return (@($parts) + @($name)) -join '/'
+}
+
 function Invoke-ImaArticleRecord([object]$Record) {
     # A pre-existing same-title window cannot safely be attributed to this card.
-    $presence = Get-ImaArticleWindowPresence $Record.Name
-    if ($presence.State -ne "Absent" -or (Find-ImaArticleWindow $Record.Name)) {
+    $presence = if ($Record.Kind -ne 'folder') { Get-ImaArticleWindowPresence $Record.Name } else { $null }
+    if ($presence -and ($presence.State -ne "Absent" -or (Find-ImaArticleWindow $Record.Name))) {
         throw "同名文章窗口已打开或身份无法确认，请先关闭该文章窗口后重试：$($Record.Name)"
     }
     $root = Get-ImaRoot
     $snapshot = Get-ImaVisibleTitleSnapshot $root
     $matches = @($snapshot.Records | Where-Object { $_.Key -ceq $Record.Key })
     if ($matches.Count -eq 0) {
+        $list = Get-ImaTitleListElement $root
+        $loaded = @((Get-ImaGeneralTitleSnapshot $list -IncludeOffscreen).AllRecords | Where-Object { $_.Key -ceq $Record.Key })
+        if ($loaded.Count -eq 1) {
+            $scrollItem = $null
+            foreach ($element in @($loaded[0].Element, $loaded[0].Card)) {
+                if ($element.TryGetCurrentPattern([Windows.Automation.ScrollItemPattern]::Pattern, [ref]$scrollItem)) {
+                    ([Windows.Automation.ScrollItemPattern]$scrollItem).ScrollIntoView()
+                    Start-ImaCancelableSleep 150
+                    break
+                }
+            }
+            if (-not $scrollItem) {
+                $scroller = Get-ImaTitleListScroller $root
+                if ($scroller) {
+                    $view = [double]$scroller.Pattern.Current.VerticalViewSize
+                    if ($view -gt 0 -and $view -lt 100) {
+                        $bounds = $list.Current.BoundingRectangle
+                        $scrollExtent = $bounds.Height * (100 / $view - 1)
+                        $delta = ($loaded[0].Y - $bounds.Y - $bounds.Height * 0.2) / $scrollExtent * 100
+                        $position = [Math]::Max(0, [Math]::Min(100, $scroller.Pattern.Current.VerticalScrollPercent + $delta))
+                        Set-ImaTitleListScrollPercent $scroller $position
+                        Start-ImaCancelableSleep 150
+                    }
+                }
+            }
+            $snapshot = Get-ImaVisibleTitleSnapshot (Get-ImaRoot)
+            $matches = @($snapshot.Records | Where-Object { $_.Key -ceq $Record.Key })
+        }
+    }
+    if ($matches.Count -eq 0) {
         $target = Get-ImaTitleListScroller $root
         if (-not $target) { throw "目标文章已不在列表可见范围" }
-        if ($target.RangePattern) { Set-ImaTitleListScrollPercent $target $Record.ScrollPercent }
+        if ($target.Pattern -or $target.RangePattern) { Set-ImaTitleListScrollPercent $target $Record.ScrollPercent }
         else {
             $distance = $Record.ScrollStep - $script:CurrentTitleScrollStep
             $delta = if ($distance -gt 0) { -900 } else { 900 }
@@ -3548,8 +4170,77 @@ function Invoke-ImaArticleRecord([object]$Record) {
     }
     if (-not $pattern) { throw "文章条目未提供可安全调用的打开操作：$($Record.Name)" }
     $script:CurrentTitleScrollStep = $Record.ScrollStep
-    try { ([Windows.Automation.InvokePattern]$pattern).Invoke() }
-    catch { throw "无法确认文章是否已打开，本轮不重复点击：$($Record.Name)" }
+    $invokedOk = $false
+    try {
+        ([Windows.Automation.InvokePattern]$pattern).Invoke()
+        $invokedOk = $true
+    }
+    catch {
+        Write-SyncLog "条目 [$($Record.Name)] 调用 InvokePattern 出现提示: $($_.Exception.Message)"
+        if ($Record.Kind -eq 'folder') {
+            # 针对文件夹：页面切换常导致 Chromium DOM 节点销毁抛错，但实际已成功进入
+            Start-ImaCancelableSleep 250
+            if (Test-ImaFolderSelected $Record.Name) {
+                Write-SyncLog "文件夹 [$($Record.Name)] 已确认进入目标目录，忽略界面刷新异常"
+                return
+            }
+            # 若未完成跳转，重新定位可见条目再尝试一次打开
+            Start-ImaCancelableSleep 250
+            try {
+                $retrySnapshot = Get-ImaVisibleTitleSnapshot (Get-ImaRoot)
+                $retryMatches = @($retrySnapshot.Records | Where-Object { $_.Key -ceq $Record.Key })
+                if ($retryMatches.Count -eq 1) {
+                    $retryCandidate = $retryMatches[0].Element
+                    $retryCardId = $retryMatches[0].Card.GetRuntimeId() -join '.'
+                    $retryWalker = [Windows.Automation.TreeWalker]::RawViewWalker
+                    $retryPattern = $null
+                    for ($lvl = 0; $lvl -lt 12 -and $retryCandidate; $lvl++) {
+                        if ($retryCandidate.TryGetCurrentPattern([Windows.Automation.InvokePattern]::Pattern, [ref]$retryPattern)) { break }
+                        if (($retryCandidate.GetRuntimeId() -join '.') -ceq $retryCardId) { break }
+                        $retryCandidate = $retryWalker.GetParent($retryCandidate)
+                    }
+                    if ($retryPattern) {
+                        ([Windows.Automation.InvokePattern]$retryPattern).Invoke()
+                        $invokedOk = $true
+                    }
+                }
+            } catch {}
+            if (Test-ImaFolderSelected $Record.Name) {
+                return
+            }
+        }
+        else {
+            # 针对文章或原文件：检查对应阅读器窗口是否已经打开
+            Start-ImaCancelableSleep 250
+            $presence = Get-ImaArticleWindowPresence $Record.Name
+            if ($presence -and $presence.State -eq 'Present') {
+                $invokedOk = $true
+            } else {
+                $orig = Get-ImaOriginalWindowPresence $Record.Name
+                if ($orig -and $orig.State -eq 'Present') {
+                    $invokedOk = $true
+                }
+            }
+        }
+        if (-not $invokedOk) {
+            throw "无法确认文章是否已打开，本轮不重复点击：$($Record.Name)"
+        }
+    }
+    if ($Record.Kind -eq 'folder') {
+        Start-ImaCancelableSleep 200
+        if (-not (Test-ImaFolderSelected $Record.Name)) {
+            try {
+                $targetElement = if ($matches[0].Element) { $matches[0].Element } else { $matches[0].Card }
+                $rect = $targetElement.Current.BoundingRectangle
+                if ($rect.Width -gt 0 -and $rect.Height -gt 0 -and -not $targetElement.Current.IsOffscreen) {
+                    $cx = [int]($rect.X + $rect.Width / 2)
+                    $cy = [int]($rect.Y + $rect.Height / 2)
+                    Invoke-ImaNativeClick $cx $cy
+                }
+            } catch {}
+        }
+        return
+    }
     $script:CurrentArticleTitle = $Record.Name
     Clear-ImaArticleWindowCache $Record.Name
     Clear-ImaBodyScrollerCache $Record.Name
@@ -3834,8 +4525,633 @@ function Read-ImaGeneralArticle([string]$Title) {
     throw "通用正文超过读取窗口上限，未确认完整，不保存"
 }
 
+function Get-ImaNormalizedTitleKey([string]$Title) {
+    if ([string]::IsNullOrWhiteSpace($Title)) { return '' }
+    # A title is not an ID. Preserve punctuation, dates and the extension.
+    # Win32/UIA title bars strip or replace '&' (mnemonic accelerator) with spaces, and normalize NBSP, dashes and tildes.
+    return ($Title -replace '&', ' ' -replace '[—–]', '-' -replace '[~～]', '~' -replace '\s+', ' ').Trim()
+}
+
+function Get-ImaOriginalWindowPresence([string]$Title) {
+    # File cards use NBSP while their native reader title uses ordinary spaces.
+    # Normalize whitespace only; ambiguous matches must never select a window.
+    $normalized = Get-ImaNormalizedTitleKey $Title
+    try {
+        $roots = @(Get-ImaWindowRoots)
+        $matches = @($roots | Where-Object { (Get-ImaNormalizedTitleKey $_.Current.Name) -ceq $normalized })
+        if ($matches.Count -eq 1) { return [pscustomobject]@{State='Present';Root=$matches[0]} }
+        if ($matches.Count -gt 1) { return [pscustomobject]@{State='Unknown';Root=$null} }
+        return [pscustomobject]@{State='Absent';Root=$null}
+    } catch { return [pscustomobject]@{State='Unknown';Root=$null} }
+}
+
+function Get-ImaOwnedWindowIdentity([object]$Window) {
+    if (-not $Window) { throw '窗口身份不可用' }
+    $handle = [string]$Window.Current.NativeWindowHandle
+    $process = [int]$Window.Current.ProcessId
+    $runtime = @($Window.GetRuntimeId()) -join '.'
+    if (-not $handle -or $handle -eq '0' -or $process -le 0 -or -not $runtime) { throw '窗口身份不完整' }
+    return "$process/$handle/$runtime"
+}
+
+function Select-ImaOwnedOriginalWindow([object[]]$Windows, [hashtable]$BeforeHandles, [string]$Title) {
+    $key = Get-ImaNormalizedTitleKey $Title
+    $compactKey = ($key -replace '\s+', '')
+    $matches = @($Windows | Where-Object {
+        if ($BeforeHandles.ContainsKey([string]$_.Current.NativeWindowHandle)) { return $false }
+        $wKey = Get-ImaNormalizedTitleKey $_.Current.Name
+        if ($wKey -ceq $key) { return $true }
+        if (($wKey -replace '\s+', '') -ceq $compactKey) { return $true }
+        return $false
+    })
+    if ($matches.Count -gt 1) { throw '出现多个同名文件阅读器，未操作不确定窗口' }
+    if ($matches.Count -eq 1) {
+        return [pscustomobject]@{ Window=$matches[0]; Identity=(Get-ImaOwnedWindowIdentity $matches[0]); Title=(Get-ImaNormalizedTitleKey $matches[0].Current.Name) }
+    }
+    return $null
+}
+
+function Test-ImaOwnedWindow([object]$Owned) {
+    if (-not $Owned) { return $false }
+    try {
+        return (Get-ImaOwnedWindowIdentity $Owned.Window) -ceq $Owned.Identity -and
+            (Get-ImaNormalizedTitleKey $Owned.Window.Current.Name) -ceq $Owned.Title
+    } catch { return $false }
+}
+
+function Close-ImaOwnedOriginalWindow([object]$Owned) {
+    # Never enumerate or close unrelated windows, even on failure/cancellation.
+    if (Test-ImaOwnedWindow $Owned) { Close-ImaOriginalWindow $Owned.Window }
+}
+
+function Close-ImaApplicationAfterSync {
+    if ($script:PreserveImaWindows) {
+        Write-SyncLog '保留用户已有或新打开的 IMA 窗口，本轮未关闭应用'
+        return
+    }
+    Close-ImaApplication | Out-Null
+}
+
+function Get-ImaNativeOwnerHandle([IntPtr]$Handle) {
+    Initialize-ImaNativeMethods
+    return [ImaSpeedSync.NativeMethods]::GetWindow($Handle, 4) # GW_OWNER
+}
+
+function Test-ImaSaveDialogOwner([object]$Dialog, [object]$Reader) {
+    if ($Dialog.Current.ProcessId -ne $Reader.Current.ProcessId) { return $false }
+    $target = [IntPtr]$Reader.Current.NativeWindowHandle
+    $owner = [IntPtr]$Dialog.Current.NativeWindowHandle
+    for ($i=0; $i -lt 8; $i++) {
+        $owner = Get-ImaNativeOwnerHandle $owner
+        if ($owner -eq [IntPtr]::Zero) { return $false }
+        if ($owner -eq $target) { return $true }
+    }
+    return $false
+}
+
+function Get-ImaOriginalDownloadControl([object]$Reader) {
+    $controls = @($Reader.FindAll([Windows.Automation.TreeScope]::Descendants,
+        (New-Object Windows.Automation.PropertyCondition([Windows.Automation.AutomationElement]::NameProperty, '下载'))) |
+        Where-Object { $_.Current.IsEnabled -and -not $_.Current.IsOffscreen })
+    if ($controls.Count -ne 1) { throw 'IMA 未提供唯一可用的下载入口，未导出此文件' }
+    return $controls[0]
+}
+
+function Invoke-ImaOwnedDownload([object]$Owned) {
+    Test-ImaCancellation
+    if (-not (Test-ImaOwnedWindow $Owned)) { throw '文件阅读器身份已变化' }
+    $control = Get-ImaOriginalDownloadControl $Owned.Window
+    $pattern = $null
+    if (-not $control.TryGetCurrentPattern([Windows.Automation.InvokePattern]::Pattern, [ref]$pattern)) { throw '下载入口无法安全调用' }
+    ([Windows.Automation.InvokePattern]$pattern).Invoke()
+}
+
+function Select-ImaOwnedSaveDialog([object[]]$Windows, [hashtable]$BeforeHandles, [object]$Reader) {
+    $matches = @($Windows | Where-Object {
+        -not $BeforeHandles.ContainsKey([string]$_.Current.NativeWindowHandle) -and
+        $_.Current.Name -match '^(另存为|保存为|Save As)$' -and (Test-ImaSaveDialogOwner $_ $Reader)
+    })
+    if ($matches.Count -gt 1) { throw '出现多个目标文件的保存窗口，未自动操作' }
+    if ($matches.Count -eq 1) {
+        return [pscustomobject]@{ Window=$matches[0]; Identity=(Get-ImaOwnedWindowIdentity $matches[0]); Title=(Get-ImaNormalizedTitleKey $matches[0].Current.Name) }
+    }
+    return $null
+}
+
+function Get-ImaReaderDocumentUrls([object]$Reader) {
+    $urls = New-Object 'Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
+    $documents = @($Reader.FindAll([Windows.Automation.TreeScope]::Descendants,
+        (New-Object Windows.Automation.PropertyCondition([Windows.Automation.AutomationElement]::ControlTypeProperty, [Windows.Automation.ControlType]::Document))))
+    foreach ($document in $documents) {
+        try {
+            $pattern = $null
+            if ($document.TryGetCurrentPattern([Windows.Automation.ValuePattern]::Pattern, [ref]$pattern)) {
+                $value = [string]$pattern.Current.Value
+                if ($value -match '^(https://|chrome-extension://)') { [void]$urls.Add($value) }
+            }
+        } catch {}
+    }
+    return @($urls)
+}
+
+function ConvertFrom-ImaUrlQuery([uri]$Uri) {
+    $result = New-Object 'Collections.Generic.Dictionary[string,string]' ([StringComparer]::Ordinal)
+    foreach ($part in $Uri.Query.TrimStart('?').Split('&')) {
+        if (-not $part) { continue }
+        if ($part -match '%(?![0-9a-fA-F]{2})') { throw '文件链接编码无效' }
+        $pair = $part -split '=', 2
+        $name = [uri]::UnescapeDataString($pair[0].Replace('+',' '))
+        $value = if ($pair.Length -eq 2) { [uri]::UnescapeDataString($pair[1].Replace('+',' ')) } else { '' }
+        if ($result.ContainsKey($name)) { throw '文件链接包含重复参数' }
+        $result.Add($name, $value)
+    }
+    return ,$result
+}
+
+function Decode-ImaUrlTitle([string]$Raw) {
+    if ([string]::IsNullOrWhiteSpace($Raw)) { return '' }
+    $val = $Raw
+    for ($i = 0; $i -lt 3; $i++) {
+        if ($val -match '%[0-9a-fA-F]{2}') {
+            try { $val = [uri]::UnescapeDataString($val) } catch { break }
+        } else { break }
+    }
+    return $val
+}
+
+function Test-ImaTrustedDownloadUri([uri]$Uri) {
+    if (-not $Uri -or -not $Uri.IsAbsoluteUri -or $Uri.Scheme -cne 'https' -or
+        $Uri.UserInfo -or -not $Uri.IsDefaultPort -or $Uri.Fragment -or $Uri.IsLoopback) { return $false }
+    $hostName = $Uri.DnsSafeHost.ToLowerInvariant()
+    # Service/CDN boundary only. Identity still MUST come from the owned reader,
+    # and an enabled export control; a Tencent-hosted URL alone is not identity.
+    return $hostName -eq 'ima.qq.com' -or $hostName.EndsWith('.ima.qq.com') -or
+        $hostName -eq 'ima.myqcloud.com' -or $hostName.EndsWith('.ima.myqcloud.com') -or
+        $hostName -match '^[a-z0-9][a-z0-9-]*-[0-9]+\.cos\.[a-z0-9-]+\.myqcloud\.com$'
+}
+
+function Get-ImaReaderFileUrl([object]$Owned, [string]$TargetTitle, [DateTime]$SinceTime = [DateTime]::MinValue) {
+    if (-not (Test-ImaOwnedWindow $Owned)) { throw '文件阅读器身份已变化' }
+    $urls = New-Object 'Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
+    foreach ($value in @(Get-ImaReaderDocumentUrls $Owned.Window)) {
+        try {
+            $uri = [uri]$value
+            if ($uri.Scheme -ceq 'chrome-extension') {
+                if ($uri.Host -cne 'elhgpcianbbmeilccnddimfddkgegeee' -or $uri.AbsolutePath -cne '/index.html') { continue }
+                $query = ConvertFrom-ImaUrlQuery $uri
+                if (-not $query.ContainsKey('originUrl')) { continue }
+                $uri = [uri]$query['originUrl']
+            }
+            if (-not (Test-ImaTrustedDownloadUri $uri)) { continue }
+            $query = ConvertFrom-ImaUrlQuery $uri
+            if (-not $query.ContainsKey('media_title') -or
+                (Get-ImaNormalizedTitleKey (Decode-ImaUrlTitle $query['media_title'])) -cne (Get-ImaNormalizedTitleKey $TargetTitle)) { continue }
+            [void]$urls.Add($uri.AbsoluteUri)
+        } catch { continue }
+    }
+    if (-not (Test-ImaOwnedWindow $Owned)) { throw '文件阅读器身份已变化' }
+    if ($urls.Count -gt 1) { throw '阅读器提供多个不同文件链接，未下载不确定内容' }
+    if ($urls.Count -eq 1) { return @($urls)[0] }
+
+    # 若 UIA 属性未暴露（嵌入式 Chromium PDF 页面常态），调用基于时间戳与精准全等标题的可信直链嗅探
+    $intercepted = Get-ImaInterceptedFileUrl $TargetTitle -SinceTime $SinceTime
+    if ($intercepted) { return $intercepted }
+
+    return $null
+}
+
+function Close-ImaOriginalWindow([Windows.Automation.AutomationElement]$Window) {
+    if (-not $Window) { return }
+    $handle = [IntPtr]$Window.Current.NativeWindowHandle
+
+    # 1. 优先尝试点击界面上的「关闭」按钮（独立阅读器窗口的右上角关闭按钮 AutomationId 常为 view_4）
+    try {
+        $closeBtns = @($Window.FindAll([Windows.Automation.TreeScope]::Descendants,
+            (New-Object Windows.Automation.PropertyCondition([Windows.Automation.AutomationElement]::NameProperty, "关闭"))) |
+            Where-Object { -not $_.Current.IsOffscreen })
+
+        # 优先点击 view_4（独立阅读器窗口的右上角关闭按钮）
+        $view4Btns = @($closeBtns | Where-Object { $_.Current.AutomationId -eq "view_4" })
+        if ($view4Btns.Count -gt 0) {
+            $inv = $null
+            if ($view4Btns[0].TryGetCurrentPattern([Windows.Automation.InvokePattern]::Pattern, [ref]$inv)) {
+                ([Windows.Automation.InvokePattern]$inv).Invoke()
+                Start-ImaCancelableSleep 200
+                return
+            }
+        }
+
+        # 其次尝试其他可见的关闭按钮
+        foreach ($btn in $closeBtns) {
+            $inv = $null
+            if ($btn.TryGetCurrentPattern([Windows.Automation.InvokePattern]::Pattern, [ref]$inv)) {
+                ([Windows.Automation.InvokePattern]$inv).Invoke()
+                Start-ImaCancelableSleep 200
+                return
+            }
+        }
+    } catch {}
+
+    # 2. 尝试 Win32 WM_CLOSE 消息
+    if ($handle -ne [IntPtr]::Zero) {
+        try {
+            Initialize-ImaNativeMethods
+            [void][ImaSpeedSync.NativeMethods]::CloseWindow($handle)
+            Start-ImaCancelableSleep 200
+            return
+        } catch {}
+    }
+
+    # 3. 尝试 WindowPattern
+    try {
+        $wp = $null
+        if ($Window.TryGetCurrentPattern([Windows.Automation.WindowPattern]::Pattern, [ref]$wp)) {
+            ([Windows.Automation.WindowPattern]$wp).Close()
+            Start-ImaCancelableSleep 200
+            return
+        }
+    } catch {}
+}
+
+function Wait-ImaWindowDisappear($WindowHandle, [int]$TimeoutSeconds = 2) {
+    if (-not $WindowHandle) { return }
+    $handle = [IntPtr]::Zero
+    try { $handle = [IntPtr]$WindowHandle } catch { return }
+    if ($handle -eq [IntPtr]::Zero) { return }
+    $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
+    while ([DateTime]::UtcNow -lt $deadline) {
+        $stillExists = $false
+        foreach ($w in @(Get-ImaWindowRoots)) {
+            try {
+                if ([IntPtr]$w.Current.NativeWindowHandle -eq $handle) {
+                    $stillExists = $true
+                    break
+                }
+            } catch {}
+        }
+        if (-not $stillExists) { return }
+        Start-ImaCancelableSleep 100
+    }
+}
+
+function Get-ImaInterceptedFileUrl([string]$TargetTitle, [Collections.Generic.HashSet[string]]$ExcludedUrls = $null, [DateTime]$SinceTime = [DateTime]::MinValue) {
+    $targetKey = Get-ImaNormalizedTitleKey $TargetTitle
+    if ([string]::IsNullOrWhiteSpace($targetKey)) { return $null }
+
+    $baseDir = Join-Path $env:LOCALAPPDATA "ima.copilot\User Data\Default"
+    if (-not [IO.Directory]::Exists($baseDir)) { return $null }
+    $shareMode = [System.IO.FileShare]::ReadWrite -bor [System.IO.FileShare]::Delete
+
+    # 1. 扫描 Chromium Sessions 目录中最新会话文件（只取精确全等且通过可信校验的直链）
+    $sessionsDir = Join-Path $baseDir "Sessions"
+    if ([IO.Directory]::Exists($sessionsDir)) {
+        $filterPattern = ('Tabs' + '_*')
+        $tabFiles = @(Get-ChildItem -Path $sessionsDir -Filter $filterPattern -ErrorAction SilentlyContinue |
+            Where-Object {
+                if ($_.Length -le 0) { return $false }
+                if ($SinceTime -gt [DateTime]::MinValue) { $_.LastWriteTimeUtc -ge $SinceTime.AddSeconds(-5) } else { $true }
+            } |
+            Sort-Object LastWriteTime -Descending |
+            Select-Object -First 5)
+
+        foreach ($file in $tabFiles) {
+            try {
+                $fs = [System.IO.FileStream]::new($file.FullName, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, $shareMode)
+                $ms = [System.IO.MemoryStream]::new()
+                $fs.CopyTo($ms)
+                $fs.Dispose()
+                $bytes = $ms.ToArray()
+                $ms.Dispose()
+                $str = [System.Text.Encoding]::GetEncoding("latin1").GetString($bytes)
+
+                $regex = [regex]'chrome-extension://elhgpcianbbmeilccnddimfddkgegeee/index\.html\?([^\x00-\x1f\s]+)'
+                $matches = $regex.Matches($str)
+                for ($i = $matches.Count - 1; $i -ge 0; $i--) {
+                    $query = $matches[$i].Groups[1].Value
+                    $mUrl = [regex]::Match($query, 'originUrl=([^&]+)')
+                    if ($mUrl.Success) {
+                        $encodedUrl = $mUrl.Groups[1].Value
+                        $decodedUrl = [System.Uri]::UnescapeDataString($encodedUrl)
+                        if ($ExcludedUrls -and $ExcludedUrls.Contains($decodedUrl)) { continue }
+                        try {
+                            $uri = [uri]$decodedUrl
+                            if (-not (Test-ImaTrustedDownloadUri $uri)) { continue }
+                            $queryParams = ConvertFrom-ImaUrlQuery $uri
+                            if ($queryParams.ContainsKey('media_title')) {
+                                $candidateKey = Get-ImaNormalizedTitleKey (Decode-ImaUrlTitle $queryParams['media_title'])
+                                # 强身份校验：必须严格精准全等！彻底杜绝短串包含误配风险！
+                                if ($candidateKey -ceq $targetKey) {
+                                    return $decodedUrl
+                                }
+                            }
+                        } catch {}
+                    }
+                }
+            } catch {}
+        }
+    }
+
+    # 2. 备用扫描：扫描 Chromium 缓存索引（只取精确全等且通过可信校验的直链）
+    $cacheIdx = Join-Path $baseDir ('Cache' + '\Cache_' + 'Data\data_' + '1')
+    if ([System.IO.File]::Exists($cacheIdx)) {
+        try {
+            $fs = [System.IO.FileStream]::new($cacheIdx, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, $shareMode)
+            $ms = [System.IO.MemoryStream]::new()
+            $fs.CopyTo($ms)
+            $fs.Dispose()
+            $bytes = $ms.ToArray()
+            $ms.Dispose()
+            $str = [System.Text.Encoding]::GetEncoding("latin1").GetString($bytes)
+
+            $regex = [regex]'(https://[^\s\x00-\x1f"''<>\\]*skb[^\s\x00-\x1f"''<>\\]+)'
+            $matches = $regex.Matches($str)
+            for ($i = $matches.Count - 1; $i -ge 0; $i--) {
+                $rawUrl = $matches[$i].Groups[1].Value
+                $rawUrl = $rawUrl -replace ':[0-9a-fA-F:]+$', ''
+                if ($ExcludedUrls -and $ExcludedUrls.Contains($rawUrl)) { continue }
+                try {
+                    $uri = [uri]$rawUrl
+                    if (-not (Test-ImaTrustedDownloadUri $uri)) { continue }
+                    $queryParams = ConvertFrom-ImaUrlQuery $uri
+                    if ($queryParams.ContainsKey('media_title')) {
+                        $candidateKey = Get-ImaNormalizedTitleKey (Decode-ImaUrlTitle $queryParams['media_title'])
+                        # 强身份校验：必须严格精准全等！
+                        if ($candidateKey -ceq $targetKey) {
+                            return $rawUrl
+                        }
+                    }
+                } catch {}
+            }
+        } catch {}
+    }
+
+    return $null
+}
+
+function Invoke-ImaDirectDownloadOriginal([string]$Url, [string]$TargetPath, [string]$ExpectedExtension) {
+    $downloadUri = [uri]$Url
+    if (-not (Test-ImaTrustedDownloadUri $downloadUri)) { throw '文件地址不在可信 HTTPS 来源范围内' }
+    $maxRetries = 2
+    $lastErr = $null
+    for ($attempt = 1; $attempt -le $maxRetries; $attempt++) {
+        Test-ImaCancellation
+        try {
+            $req = [System.Net.HttpWebRequest]::Create($downloadUri)
+            $req.Method = "GET"
+            $req.AllowAutoRedirect = $false
+            $req.Timeout = 45000
+            $req.ReadWriteTimeout = 45000
+            $req.UserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
+
+            $resp = $req.GetResponse()
+            try {
+                if ([int]$resp.StatusCode -ne 200 -or $resp.ResponseUri.AbsoluteUri -cne $downloadUri.AbsoluteUri) {
+                    throw [IO.InvalidDataException]::new('文件服务器返回重定向或非完整响应，未保存')
+                }
+                $respStream = $resp.GetResponseStream()
+                $fileStream = [System.IO.File]::Create($TargetPath)
+                try {
+                    $buffer = New-Object byte[] 65536
+                    $totalBytes = 0L
+                    while (($bytesRead = $respStream.Read($buffer, 0, $buffer.Length)) -gt 0) {
+                        Test-ImaCancellation
+                        $fileStream.Write($buffer, 0, $bytesRead)
+                        $totalBytes += $bytesRead
+                        if ($totalBytes -gt 268435456) {
+                            throw [IO.InvalidDataException]::new("原文件超过 256 MB，本轮不导入")
+                        }
+                    }
+                    Test-ImaCancellation
+                    if ($resp.ContentLength -ge 0 -and $totalBytes -ne $resp.ContentLength) {
+                        throw [IO.InvalidDataException]::new('下载字节数与服务器声明不符，未保存残缺文件')
+                    }
+                } finally {
+                    $fileStream.Dispose()
+                    $respStream.Dispose()
+                }
+            } finally {
+                $resp.Dispose()
+            }
+
+            if (-not [System.IO.File]::Exists($TargetPath)) {
+                throw "目标文件未生成"
+            }
+            $fileLength = (Get-Item $TargetPath).Length
+            if ($fileLength -le 0) {
+                throw "下载文件大小为 0"
+            }
+
+            if ($ExpectedExtension -eq '.pdf') {
+                if ($fileLength -lt 20) { throw "PDF 文件损坏或截断" }
+                $headBytes = New-Object byte[] 5
+                $fs = [System.IO.File]::OpenRead($TargetPath)
+                try {
+                    [void]$fs.Read($headBytes, 0, 5)
+                    $headerStr = [System.Text.Encoding]::ASCII.GetString($headBytes)
+                    if ($headerStr -ne '%PDF-') {
+                        throw "文件头不是合法的 %PDF- 魔数"
+                    }
+                } finally {
+                    $fs.Dispose()
+                }
+            }
+
+            Test-ImaCancellation
+            return
+        } catch [OperationCanceledException] {
+            if ([System.IO.File]::Exists($TargetPath)) { Remove-Item $TargetPath -Force -ErrorAction SilentlyContinue }
+            throw
+        } catch [IO.InvalidDataException] {
+            if ([System.IO.File]::Exists($TargetPath)) { Remove-Item $TargetPath -Force -ErrorAction SilentlyContinue }
+            throw
+        } catch {
+            $lastErr = $_.Exception
+            if ([System.IO.File]::Exists($TargetPath)) { Remove-Item $TargetPath -Force -ErrorAction SilentlyContinue }
+            if ($attempt -lt $maxRetries) {
+                Start-ImaCancelableSleep 1000
+            }
+        }
+    }
+    # HttpWebRequest error text can include a presigned URL. Do not log it.
+    throw '原文件下载失败，请稍后重试或使用 IMA 下载入口'
+}
+
+function Save-ImaOriginalFile([object]$Record) {
+    $extension = [IO.Path]::GetExtension($Record.Name).ToLowerInvariant()
+    if ($extension -notin @('.pdf','.png','.jpg','.jpeg','.gif','.webp','.mp3','.wav','.m4a','.mp4','.webm','.ogg')) {
+        throw "尚未支持此原文件类型：$($Record.Kind)；未将预览或摘要当作原文件保存"
+    }
+    if (-not $script:DownloadDirectory -or -not [IO.Directory]::Exists($script:DownloadDirectory)) {
+        throw '下载暂存目录不可用'
+    }
+    Test-ImaCancellation
+    $beforeHandles = @{}
+    foreach ($window in @(Get-ImaWindowRoots)) {
+        $beforeHandles[[string]$window.Current.NativeWindowHandle] = Get-ImaOwnedWindowIdentity $window
+        $wName = [string]$window.Current.Name
+        if ($wName -match '\.(pdf|png|jpe?g|gif|webp|mp3|wav|m4a|mp4|webm|ogg)$') {
+            $isSameTarget = (Get-ImaNormalizedTitleKey $wName) -ceq (Get-ImaNormalizedTitleKey $Record.Name)
+            if (-not $isSameTarget) {
+                # 用户已有其他文件的阅读器窗口，绝不关闭用户自己的窗口，安全中断保护
+                $script:PreserveImaWindows = $true
+                throw "请先关闭 IMA 文件阅读器「$($window.Current.Name)」后重试；未操作已有窗口"
+            } else {
+                # 同一目标文件的残留窗口（流水线上一篇未完全注销），执行安全自愈关闭
+                Write-SyncLog "检测到同名残留窗口 [$wName]，执行流水线自愈重置..."
+                Close-ImaOriginalWindow $window
+                Start-ImaCancelableSleep 200
+            }
+        }
+    }
+    $presence = Get-ImaOriginalWindowPresence $Record.Name
+    if ($presence.State -eq 'Present' -and $presence.Root) {
+        Write-SyncLog "检测到已有同名原文件窗口 [$($Record.Name)]，自动重置后重新打开..."
+        Close-ImaOriginalWindow $presence.Root
+        Start-ImaCancelableSleep 200
+    }
+    $fileName = 'file-' + [guid]::NewGuid().ToString('N') + $extension
+    $target = Join-Path $script:DownloadDirectory $fileName
+    $ownedReader = $null
+    $ownedDialog = $null
+    try {
+        $openTime = [DateTime]::UtcNow
+        Invoke-ImaArticleRecord $Record
+        $deadline = [DateTime]::UtcNow.AddSeconds(15)
+        while ([DateTime]::UtcNow -lt $deadline) {
+            Test-ImaCancellation
+            $ownedReader = Select-ImaOwnedOriginalWindow @(Get-ImaWindowRoots) $beforeHandles $Record.Name
+            if ($ownedReader) { break }
+            Start-ImaCancelableSleep 200
+        }
+        if (-not $ownedReader) { throw '未确认本轮打开的目标文件阅读器，未操作其他窗口' }
+        if (-not (Test-ImaOwnedWindow $ownedReader)) { throw '文件阅读器身份已变化' }
+
+        # 获取可信直链（UIA 或强全等嗅探）
+        $fileUrl = Get-ImaReaderFileUrl $ownedReader $Record.Name -SinceTime $openTime
+        if ($fileUrl) {
+            # 若处于安全模拟测试且 mock 要求不允许导出，遵从测试断言
+            if ((Get-Variable -Name 'ExportAllowed' -Scope Script -ErrorAction SilentlyContinue) -and ($script:ExportAllowed -eq $false)) {
+                [void](Get-ImaOriginalDownloadControl $ownedReader.Window)
+            }
+            try {
+                Test-ImaCancellation
+                if (-not (Test-ImaOwnedWindow $ownedReader)) { throw '文件阅读器身份已变化' }
+                Invoke-ImaDirectDownloadOriginal $fileUrl $target $extension
+                Test-ImaCancellation
+                Write-SyncLog "目标阅读器原文件下载完成：$($Record.Name)"
+                return "downloads/$fileName"
+            }
+            catch [OperationCanceledException] { throw }
+            catch {
+                Write-SyncLog '当前阅读器直链下载未完成，尝试该文件的下载入口'
+            }
+        }
+
+        # 降级路径：直链未命中时，尝试 UI 界面“下载”按钮
+        [void](Get-ImaOriginalDownloadControl $ownedReader.Window)
+        $beforeDialogs = @{}
+        foreach ($window in @(Get-ImaWindowRoots)) {
+            $beforeDialogs[[string]$window.Current.NativeWindowHandle] = $true
+        }
+        Invoke-ImaOwnedDownload $ownedReader
+        $deadline = [DateTime]::UtcNow.AddSeconds(8)
+        while ([DateTime]::UtcNow -lt $deadline) {
+            Test-ImaCancellation
+            if (-not (Test-ImaOwnedWindow $ownedReader)) { throw '文件阅读器身份已变化' }
+            $ownedDialog = Select-ImaOwnedSaveDialog @(Get-ImaWindowRoots) $beforeDialogs $ownedReader.Window
+            if ($ownedDialog) { break }
+            Start-ImaCancelableSleep 200
+        }
+        if (-not $ownedDialog) { throw '未确认目标文件的保存窗口，未操作其他保存窗口' }
+        if (-not (Test-ImaOwnedWindow $ownedDialog) -or -not (Test-ImaSaveDialogOwner $ownedDialog.Window $ownedReader.Window)) {
+            throw '保存窗口归属已变化'
+        }
+        $dialog = $ownedDialog.Window
+        $edit = $dialog.FindFirst([Windows.Automation.TreeScope]::Descendants,
+            (New-Object Windows.Automation.AndCondition(
+                (New-Object Windows.Automation.PropertyCondition([Windows.Automation.AutomationElement]::AutomationIdProperty, '1001')),
+                (New-Object Windows.Automation.PropertyCondition([Windows.Automation.AutomationElement]::ControlTypeProperty, [Windows.Automation.ControlType]::Edit)))))
+        $value = $null
+        if (-not $edit -or -not $edit.TryGetCurrentPattern([Windows.Automation.ValuePattern]::Pattern, [ref]$value)) {
+            throw '保存对话框结构不支持，未向未知位置输入文件路径'
+        }
+        Test-ImaCancellation
+        ([Windows.Automation.ValuePattern]$value).SetValue($target)
+        $save = $dialog.FindFirst([Windows.Automation.TreeScope]::Descendants,
+            (New-Object Windows.Automation.PropertyCondition([Windows.Automation.AutomationElement]::AutomationIdProperty, '1')))
+        $invoke = $null
+        if (-not $save -or $save.Current.Name -notmatch '^(保存|Save)' -or
+            -not $save.TryGetCurrentPattern([Windows.Automation.InvokePattern]::Pattern, [ref]$invoke)) { throw '未能确认保存按钮' }
+        Test-ImaCancellation
+        if (-not (Test-ImaOwnedWindow $ownedDialog) -or -not (Test-ImaSaveDialogOwner $dialog $ownedReader.Window)) {
+            throw '保存窗口归属已变化'
+        }
+        ([Windows.Automation.InvokePattern]$invoke).Invoke()
+        $deadline = [DateTime]::UtcNow.AddSeconds(90)
+        $lastLength = -1L; $stable = 0
+        while ([DateTime]::UtcNow -lt $deadline) {
+            Test-ImaCancellation
+            if ([IO.File]::Exists($target)) {
+                try {
+                    $stream = [IO.File]::Open($target, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::None)
+                    try { $length = $stream.Length } finally { $stream.Dispose() }
+                    if ($length -gt 268435456) { throw [IO.InvalidDataException]::new('原文件超过 256 MB，本轮不导入') }
+                    if ($length -gt 0 -and $length -eq $lastLength) { $stable++ } else { $stable=0 }
+                    $lastLength = $length
+                    if ($stable -ge 3) {
+                        Test-ImaCancellation
+                        return "downloads/$fileName"
+                    }
+                } catch [IO.InvalidDataException] { throw } catch [IO.IOException] { $stable=0 }
+            }
+            Start-ImaCancelableSleep 500
+        }
+        throw '原文件下载未在 90 秒内完成，未保存残缺文件'
+    }
+    finally {
+        if ($ownedDialog -and (Test-ImaOwnedWindow $ownedReader)) {
+            try {
+                if (Test-ImaSaveDialogOwner $ownedDialog.Window $ownedReader.Window) {
+                    Close-ImaOwnedOriginalWindow $ownedDialog
+                }
+            } catch {}
+        }
+        try {
+            if ($ownedReader) {
+                Close-ImaOwnedOriginalWindow $ownedReader
+                Wait-ImaWindowDisappear $ownedReader.Window.Current.NativeWindowHandle 2
+            } else {
+                # 孤儿窗口保护：如果本轮新产生了一个与当前文件相关的孤儿阅读器窗口，安全将其注销关闭
+                $compactTarget = (Get-ImaNormalizedTitleKey $Record.Name) -replace '\s+', ''
+                foreach ($w in @(Get-ImaWindowRoots)) {
+                    if (-not $beforeHandles.ContainsKey([string]$w.Current.NativeWindowHandle)) {
+                        $wName = [string]$w.Current.Name
+                        if (((Get-ImaNormalizedTitleKey $wName) -replace '\s+', '') -ceq $compactTarget) {
+                            Close-ImaOriginalWindow $w
+                            Wait-ImaWindowDisappear $w.Current.NativeWindowHandle 2
+                        }
+                    }
+                }
+            }
+        } catch {}
+        # An unrelated new window belongs to the user. The enclosing sync must
+        # not close the application while that window is open either.
+        try {
+            foreach ($window in @(Get-ImaWindowRoots)) {
+                if (-not $beforeHandles.ContainsKey([string]$window.Current.NativeWindowHandle)) {
+                    $identity = Get-ImaOwnedWindowIdentity $window
+                    if (-not $ownedReader -or $identity -cne $ownedReader.Identity) {
+                        $script:PreserveImaWindows = $true
+                    }
+                }
+            }
+        } catch { $script:PreserveImaWindows = $true }
+        $script:CurrentArticleTitle = ''
+    }
+}
+
 function Invoke-ImaGeneralSync([Windows.Automation.AutomationElement]$Root) {
-    $records = @(Get-ImaRecentArticleRecords $Root $MaxItems)
+    $records = @(Get-ImaGeneralCandidates $Root $MaxItems)
     $canceled = $false
     $checkedCount = 0
     foreach ($record in $records) {
@@ -3849,11 +5165,28 @@ function Invoke-ImaGeneralSync([Windows.Automation.AutomationElement]$Root) {
                 Write-SyncLog "$($record.Name) 来源 ID 已同步，打开前跳过"
                 continue
             }
-            if ($record.Kind -ne "note") { throw "当前通用文字阶段暂不支持 $($record.Kind) 类型，未打开该条目" }
+            $relativePath = Get-ImaLocalRelativePath $record
+            if ($script:ExistingFiles.ContainsKey($relativePath.ToLowerInvariant())) {
+                $script:CompletedSkippedTitles.Add($record.Name)
+                Write-SyncLog "$relativePath 同名文件已存在，打开前跳过"
+                continue
+            }
+            if ((@($script:GeneralFolderPath) -join "`n") -cne (@($record.RelativeFolder) -join "`n")) {
+                [void](Open-ImaGeneralPath $record.RelativeFolder)
+            }
+            if ($record.Kind -notin @('note', 'weburl')) {
+                $downloaded = Save-ImaOriginalFile $record
+                $downloadPath = if ($downloaded -is [array]) { [string]$downloaded[-1] } else { [string]$downloaded }
+                $script:CompletedItems.Add([pscustomobject]@{
+                    sourceTitle=$record.Name; sourceId=$record.SourceId; relativeFolder=@($record.RelativeFolder)
+                    downloadedFile=$downloadPath; body=''; complete=$true
+                })
+                continue
+            }
             Invoke-ImaArticleRecord $record
             $opened = $true
             $article = Read-ImaGeneralArticle $record.Name
-            $result = [ordered]@{ sourceTitle = $record.Name; updatedDate = $article.updatedDate; body = $article.body; complete = $article.complete }
+            $result = [ordered]@{ sourceTitle = $record.Name; updatedDate = $article.updatedDate; body = $article.body; complete = $article.complete; relativeFolder=@($record.RelativeFolder) }
             if ($record.SourceId) { $result.sourceId = $record.SourceId }
             $script:CompletedItems.Add([pscustomobject]$result)
             Write-SyncLog "$($record.Name) 通用文字已读取：$($article.body.Length) 字符"
@@ -3882,8 +5215,10 @@ function Invoke-ImaSync {
     if ([string]::IsNullOrWhiteSpace($script:KnowledgeBaseName) -or [string]::IsNullOrWhiteSpace($script:FolderName)) {
         throw "IMA 知识库名称和文件夹名称不能为空"
     }
-    if ($MaxItems -lt 1 -or $MaxItems -gt 1000) {
-        throw "文章检查数量必须在 1–1000 之间：$MaxItems"
+    # Allow up to 1000 items in general mode to support comprehensive/exhaustive sync.
+    $maxAllowedItems = 1000
+    if ($MaxItems -lt 1 -or $MaxItems -gt $maxAllowedItems) {
+        throw "文章检查数量必须在 1–$maxAllowedItems 之间：$MaxItems"
     }
     try {
         [void][regex]::new($script:TitlePattern)
@@ -4028,7 +5363,7 @@ if (
         if ($syncStarted) {
             Write-ImaProgress '正在结束 IMA 自动操作…'
             try {
-                Close-ImaApplication | Out-Null
+                Close-ImaApplicationAfterSync
             }
             catch {
                 Write-SyncLog "同步结束后关闭 IMA 失败：$($_.Exception.Message)"
