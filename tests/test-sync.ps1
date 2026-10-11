@@ -1092,6 +1092,13 @@ Assert-Equal "1" ([string]$script:tailAnchorCalls) "an already-positioned tail d
 }
 
 & {
+    $script:tailPercent = 98.0158967310106
+    $script:tailCurrentText = $script:tailWindowD
+    function Invoke-ImaBodyMouseWheel {}
+    Assert-Throws { Merge-ImaTextWindowsToBottom "brief-0913" $script:tailWindowD 98.0158967310106 } "98-percent stagnation alone cannot prove the final content was read"
+}
+
+& {
     $script:tailPercent = 103.118
     $script:cancelTailMoves = 0
     function Invoke-ImaBodyMouseWheel { $script:cancelTailMoves++; throw [OperationCanceledException]::new("cancel") }

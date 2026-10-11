@@ -18,10 +18,64 @@ export interface I18nStrings {
   versionText: (ver: string) => string;
 
   // 标签栏
+  tabStats: string;
   tabScope: string;
   tabMarkdown: string;
   tabNotifications: string;
   tabGeneral: string;
+
+  // 统计看板 (Dashboard)
+  dashProfileSubtitle: (count: number, savedHours: string) => string;
+  dashKpiScanned: string;
+  dashKpiSynced: string;
+  dashKpiToMd: string;
+  dashKpiSavedHours: string;
+  dashKpiStreak: string;
+  dashSecValue: string;
+  dashValFormula: string;
+  dashCard1Title: string;
+  dashCard1Sub: (days: string) => string;
+  dashCard1Desc: string;
+  dashCard2Title: string;
+  dashCard2Sub: (books: string) => string;
+  dashCard2Desc: string;
+  dashCard3Title: string;
+  dashCard3Sub: (streak: number) => string;
+  dashCard3Desc: string;
+  dashUnitHours: string;
+  dashUnitWords: (words: string, mb: string) => string;
+  dashUnitAutoRate: string;
+  dashSecActivity: string;
+  dashFilterDay: string;
+  dashFilterWeek: string;
+  dashFilterTotal: string;
+  dashBtnCheckSync: string;
+  dashHeatSummary: (runs: number, savedHours: string, streak?: number) => string;
+  dashHeatTip: (date: string, count: number) => string;
+  dashLegendLess: string;
+  dashLegendMore: string;
+  dashEmptyUnconfiguredTitle: string;
+  dashEmptyUnconfiguredDesc: string;
+  dashEmptyUnconfiguredBtn: string;
+  dashEmptyNeverSyncedTitle: string;
+  dashEmptyNeverSyncedDesc: string;
+  dashEmptyNeverSyncedBtn: string;
+  dashProfileUnconfigured: string;
+  dashProfileNeverSynced: string;
+  dashHeatEmptyTip: string;
+  scopeEmptyTip: string;
+  dashInsightPeriodSynced: string;
+  dashInsightPeriodHours: string;
+  dashInsightPeakDay: string;
+  dashInsightAvgWeek: (avg: string) => string;
+  dashInsightSavedDesc: string;
+  dashInsightPeakDesc: (count: number) => string;
+  dashStatsNote: string;
+  dashMonth: (month: number) => string;
+  dashMonthDay: (month: number, day: number) => string;
+  dashPeriodSummary: (months: number, count: number, hours: string) => string;
+  dashItemsUnit: string;
+  dashNoPeak: string;
 
   // 基础设置 (General)
   languageName: string;
@@ -135,6 +189,17 @@ export interface I18nStrings {
   manualScanName: string;
   manualScanDesc: string;
   manualScanBtn: string;
+  mdStatusHeading: string;
+  mdStatusIdle: string;
+  mdStatusConverting: string;
+  mdStatusCompleted: string;
+  mdKpiConverted: string;
+  mdKpiSkipped: string;
+  mdKpiFailed: string;
+  mdLastConverted: (time: string) => string;
+  mdNeverConverted: string;
+  mdProgressText: (cur: number, total: number, pct: number) => string;
+  mdBtnConverting: string;
 
   // 命令与提示 (Commands & UI)
   ribbonTooltip: string;
@@ -159,10 +224,64 @@ export const zhStrings: I18nStrings = {
   versionText: (ver) => `当前版本 v${ver}`,
 
   // 标签栏
+  tabStats: "使用统计",
   tabScope: "同步范围",
   tabMarkdown: "文档转换",
   tabNotifications: "通知提醒",
   tabGeneral: "基础设置",
+
+  // 统计看板 (Dashboard)
+  dashProfileSubtitle: (count, hours) => `本地 ${count} 个文件，累计节省约 ${hours} 小时。`,
+  dashKpiScanned: "累计检查",
+  dashKpiSynced: "本地文件",
+  dashKpiToMd: "Markdown",
+  dashKpiSavedHours: "省下时间",
+  dashKpiStreak: "连续天数",
+  dashSecValue: "为你省了",
+  dashValFormula: "按每次成功保存省 10 分钟估算。",
+  dashCard1Title: "省下时间",
+  dashCard1Sub: (days) => `免去 ${days} 天手工整理。`,
+  dashCard1Desc: "自动找文章排版入库，不用手动复制。",
+  dashCard2Title: "存下内容",
+  dashCard2Sub: (count) => `当前目录共 ${count} 个文件。`,
+  dashCard2Desc: "按当前保存目录的实际文件大小统计。",
+  dashCard3Title: "同步成功率",
+  dashCard3Sub: (streak) => `连续 ${streak} 天有内容存入。`,
+  dashCard3Desc: "已完成任务中全部成功的比例，不含取消。",
+  dashUnitHours: "小时",
+  dashUnitWords: (words, mb) => `${words} 万字 · ${mb} MB`,
+  dashUnitAutoRate: "成功率",
+  dashSecActivity: "同步记录",
+  dashFilterDay: "近 3 月",
+  dashFilterWeek: "近半年",
+  dashFilterTotal: "全 年",
+  dashBtnCheckSync: "立刻同步",
+  dashHeatSummary: (count, hours) => `近一年存入 ${count} 篇，估计节省 ${hours} 小时。`,
+  dashHeatTip: (date, count) => count > 0 ? `${date}：存入 ${count} 篇` : `${date}：暂无记录`,
+  dashLegendLess: "少",
+  dashLegendMore: "多",
+  dashEmptyUnconfiguredTitle: "欢迎使用",
+  dashEmptyUnconfiguredDesc: "请先设置要同步的知识库与文件夹。",
+  dashEmptyUnconfiguredBtn: "去设置",
+  dashEmptyNeverSyncedTitle: "准备就绪",
+  dashEmptyNeverSyncedDesc: "已配置好范围，点击开始第一次同步。",
+  dashEmptyNeverSyncedBtn: "立刻同步",
+  dashProfileUnconfigured: "未设置知识库",
+  dashProfileNeverSynced: "尚未开始同步，配置后自动在此累计。",
+  dashHeatEmptyTip: "尚未开始同步，点击【立刻同步】点亮记录",
+  scopeEmptyTip: "填好 IMA 中的知识库名与文件夹名即可开始同步。",
+  dashInsightPeriodSynced: "本期存入",
+  dashInsightPeriodHours: "省下时间",
+  dashInsightPeakDay: "单日最高",
+  dashInsightAvgWeek: (avg) => `平均每周 ${avg} 篇`,
+  dashInsightSavedDesc: "免去手动复制整理",
+  dashInsightPeakDesc: (count) => `当天存入 ${count} 篇`,
+  dashStatsNote: "本地文件按当前目录统计；同步计数从本次升级起记录，旧日志不估算。",
+  dashMonth: (month) => `${month}月`,
+  dashMonthDay: (month, day) => `${month}月${day}日`,
+  dashPeriodSummary: (months, count, hours) => `近 ${months} 个月存入 ${count} 篇，估计节省 ${hours} 小时。`,
+  dashItemsUnit: "篇",
+  dashNoPeak: "暂无记录",
 
   // 基础设置 (General)
   languageName: "界面语言",
@@ -276,6 +395,17 @@ export const zhStrings: I18nStrings = {
   manualScanName: "手动补全",
   manualScanDesc: "扫描当前文件夹并补齐遗漏 MD。",
   manualScanBtn: "立即补全",
+  mdBtnConverting: "正在转换中…",
+  mdStatusHeading: "转换看板",
+  mdStatusIdle: "就绪",
+  mdStatusConverting: "正在转换",
+  mdStatusCompleted: "转换完成",
+  mdKpiConverted: "已生成",
+  mdKpiSkipped: "已跳过",
+  mdKpiFailed: "失败项",
+  mdLastConverted: (time) => `上次转换：${time}`,
+  mdNeverConverted: "尚未开始转换",
+  mdProgressText: (cur, total, pct) => `正在转换 (${cur}/${total}) · ${pct}%`,
 
   // 命令与提示 (Commands & UI)
   ribbonTooltip: "打开 IMA Share Sync",
@@ -300,10 +430,64 @@ export const enStrings: I18nStrings = {
   versionText: (ver) => `Version v${ver}`,
 
   // Tabs
+  tabStats: "Overview",
   tabScope: "Sync Scope",
   tabMarkdown: "Convert",
   tabNotifications: "Notices",
   tabGeneral: "General",
+
+  // Dashboard
+  dashProfileSubtitle: (count, hours) => `${count} local files, ~${hours} hours saved.`,
+  dashKpiScanned: "Total checked",
+  dashKpiSynced: "Local files",
+  dashKpiToMd: "Markdown",
+  dashKpiSavedHours: "Time Saved",
+  dashKpiStreak: "Streak",
+  dashSecValue: "Time & Effort Saved",
+  dashValFormula: "Estimated at 10 minutes per successful save.",
+  dashCard1Title: "Time Saved",
+  dashCard1Sub: (days) => `Saves ${days} workdays.`,
+  dashCard1Desc: "Auto-formats into Obsidian, no copy-pasting.",
+  dashCard2Title: "Articles Kept",
+  dashCard2Sub: (count) => `${count} files in the current folder.`,
+  dashCard2Desc: "Actual file size in the current destination.",
+  dashCard3Title: "Sync success rate",
+  dashCard3Sub: (streak) => `${streak} consecutive days with saved content.`,
+  dashCard3Desc: "Fully successful runs; canceled runs excluded.",
+  dashUnitHours: "hours",
+  dashUnitWords: (words, mb) => `${words}0k words · ${mb} MB`,
+  dashUnitAutoRate: "Success",
+  dashSecActivity: "Sync History",
+  dashFilterDay: "3 Months",
+  dashFilterWeek: "6 Months",
+  dashFilterTotal: "1 Year",
+  dashBtnCheckSync: "Sync Now",
+  dashHeatSummary: (count, hours) => `${count} saves in the past year, ~${hours} hours saved.`,
+  dashHeatTip: (date, count) => count > 0 ? `${date}: ${count} synced` : `${date}: No syncs`,
+  dashLegendLess: "Less",
+  dashLegendMore: "More",
+  dashEmptyUnconfiguredTitle: "Welcome",
+  dashEmptyUnconfiguredDesc: "Please set up your knowledge base and folder first.",
+  dashEmptyUnconfiguredBtn: "Set Up",
+  dashEmptyNeverSyncedTitle: "Ready",
+  dashEmptyNeverSyncedDesc: "Scope configured. Click to start first sync.",
+  dashEmptyNeverSyncedBtn: "Sync Now",
+  dashProfileUnconfigured: "No Knowledge Base Set",
+  dashProfileNeverSynced: "No syncs yet. Records will accumulate here.",
+  dashHeatEmptyTip: "No sync records yet. Click 'Sync Now' to light up.",
+  scopeEmptyTip: "Fill in the IMA knowledge base and folder to start syncing.",
+  dashInsightPeriodSynced: "Synced",
+  dashInsightPeriodHours: "Time Saved",
+  dashInsightPeakDay: "Peak Day",
+  dashInsightAvgWeek: (avg) => `Avg ~${avg}/wk`,
+  dashInsightSavedDesc: "No manual copying",
+  dashInsightPeakDesc: (count) => `${count} articles on day`,
+  dashStatsNote: "Local files reflect the current folder. Sync counts start with this upgrade; older logs are not estimated.",
+  dashMonth: (month) => new Date(2000, month - 1, 1).toLocaleDateString("en-US", { month: "short" }),
+  dashMonthDay: (month, day) => new Date(2000, month - 1, day).toLocaleDateString("en-US", { month: "short", day: "numeric" }),
+  dashPeriodSummary: (months, count, hours) => `${count} saves in the past ${months} months, ~${hours} hours saved.`,
+  dashItemsUnit: "items",
+  dashNoPeak: "No records yet",
 
   // General Settings
   languageName: "Language",
@@ -417,6 +601,17 @@ export const enStrings: I18nStrings = {
   manualScanName: "Manual Fill",
   manualScanDesc: "Scan folder and generate missing Markdown notes.",
   manualScanBtn: "Fill Now",
+  mdBtnConverting: "Converting...",
+  mdStatusHeading: "Conversion Dashboard",
+  mdStatusIdle: "Ready",
+  mdStatusConverting: "Converting",
+  mdStatusCompleted: "Completed",
+  mdKpiConverted: "Converted",
+  mdKpiSkipped: "Skipped",
+  mdKpiFailed: "Failed",
+  mdLastConverted: (time) => `Last converted: ${time}`,
+  mdNeverConverted: "No conversions yet",
+  mdProgressText: (cur, total, pct) => `Converting (${cur}/${total}) · ${pct}%`,
 
   // Commands & Notices
   ribbonTooltip: "Open IMA Share Sync",

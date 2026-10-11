@@ -84,6 +84,21 @@ Check $true ($left -cne $right) 'sanitized folder collision has stable suffix'
     $script:GeneralScanStarted=$null
 }
 
+& {
+    function Get-ImaRoot { return [pscustomobject]@{} }
+    function Get-ImaTitleListElement { return [pscustomobject]@{Current=[pscustomobject]@{BoundingRectangle=[pscustomobject]@{Height=100;Y=0}}} }
+    function Get-ImaTitleListScroller { return $null }
+    function Reset-ImaTitleListToTop {}
+    function Test-ImaNamedElement { return $false } # No footer element on short folders
+    function Get-ImaGeneralTitleSnapshot {
+        return [pscustomobject]@{AllRecords=@(1..3 | ForEach-Object { [pscustomobject]@{Key="$_";Y=0;ScrollPercent=0;ScrollStep=0} })}
+    }
+    $script:GeneralScanStarted=[DateTime]::UtcNow; $script:GeneralScannedFolders=0
+    $rows = @(Get-ImaFolderRecords $null -1)
+    Check 3 $rows.Count 'non-scrollable short folder returns all items without requiring footer element'
+    $script:GeneralScanStarted=$null
+}
+
 function Make-Record($Name,$Kind,$Time,$Id='', $Count=0) {
     return [pscustomobject]@{Name=$Name;Kind=$Kind;TimeLabel=$Time;SourceId=$Id;Key=$Name;ChildCount=$Count}
 }

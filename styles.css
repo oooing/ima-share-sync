@@ -849,23 +849,23 @@ button.ima-share-sync-nav-entry:focus-visible {
 }
 
 /* ==========================================================================
-   【候选 2 专属核心】药丸浮动胶囊 Tab 导航 (Pill Segmented Tab Bar with Spring)
+   通栏分段 Tab 导航 (Segmented Full-Width Tab Bar with Spring)
    ========================================================================== */
 .ima-settings-tabs-header {
   display: flex;
   align-items: center;
-  justify-content: center;
-  gap: 4px;
+  justify-content: space-between;
+  gap: 6px;
   margin-top: 14px;
   margin-bottom: 22px;
-  margin-left: auto !important;
-  margin-right: auto !important;
-  width: fit-content !important;
-  max-width: 100%;
-  padding: 4px;
+  margin-left: 0 !important;
+  margin-right: 0 !important;
+  width: 100% !important;
+  box-sizing: border-box;
+  padding: 5px;
   background: rgba(0, 0, 0, 0.22) !important;
   border: 1px solid var(--background-modifier-border) !important;
-  border-radius: 9999px !important;
+  border-radius: 12px !important;
   overflow-x: auto;
   scrollbar-width: none;
   box-shadow: 0 3px 12px rgba(0, 0, 0, 0.1);
@@ -880,20 +880,22 @@ button.ima-share-sync-nav-entry:focus-visible {
   display: none;
 }
 
-/* 覆盖 Obsidian 全局 button 样式，实现 Emil 物理触感药丸胶囊 */
+/* 覆盖 Obsidian 全局 button 样式，实现等宽对齐通栏 Tab 单元 */
 button.ima-settings-tab-btn {
+  flex: 1 1 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 7px;
-  padding: 8px 18px !important;
+  padding: 9px 12px !important;
   margin: 0 !important;
+  min-width: 0;
   font-size: var(--font-ui-small, 13px) !important;
   font-weight: 500 !important;
   color: var(--text-muted) !important;
   background: transparent !important;
   border: none !important;
-  border-radius: 9999px !important;
+  border-radius: 8px !important;
   box-shadow: none !important;
   cursor: pointer;
   user-select: none;
@@ -908,6 +910,7 @@ button.ima-settings-tab-btn svg {
   opacity: 0.65;
   transition: opacity var(--emil-dur-fast) ease, stroke var(--emil-dur-fast) ease;
   vertical-align: middle;
+  flex-shrink: 0;
 }
 
 button.ima-settings-tab-btn:hover {
@@ -920,13 +923,14 @@ button.ima-settings-tab-btn:hover svg {
 }
 
 button.ima-settings-tab-btn:active {
-  transform: scale(0.96);
+  transform: scale(0.98);
 }
 
 button.ima-settings-tab-btn.is-active {
   color: #ffffff !important;
   font-weight: 600 !important;
   background: linear-gradient(135deg, #a855f7, #7c3aed) !important;
+  border-radius: 8px !important;
   box-shadow: 0 3px 12px rgba(168, 85, 247, 0.4) !important;
 }
 
@@ -981,6 +985,846 @@ button:not(.ima-settings-tab-btn):not(.ima-compact-num-input):active {
   transform: scale(0.95);
 }
 
-.checkbox-container:active {
-  transform: scale(0.95);
+/* ==========================================================================
+   数据统计看板 (Dashboard & Heatmap & Value ROI)
+   ========================================================================== */
+
+.ima-dashboard-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+  padding-top: 8px;
+}
+
+/* 新手空状态引导卡片 (Onboarding Empty State Banner) */
+.ima-dash-empty-banner {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 13px 18px;
+  border-radius: 12px;
+  margin-bottom: 20px;
+  box-sizing: border-box;
+  animation: imaFadeIn 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  transition: all var(--emil-dur-normal) var(--emil-ease-spring);
+}
+
+.ima-empty-unconfigured {
+  background: linear-gradient(135deg, rgba(168, 85, 247, 0.12) 0%, rgba(124, 58, 237, 0.05) 100%), var(--background-secondary);
+  border: 1.5px solid rgba(168, 85, 247, 0.45);
+  box-shadow: 0 4px 20px -4px rgba(168, 85, 247, 0.25);
+}
+
+.ima-empty-ready {
+  background: linear-gradient(135deg, rgba(245, 158, 11, 0.12) 0%, rgba(217, 119, 6, 0.05) 100%), var(--background-secondary);
+  border: 1.5px solid rgba(245, 158, 11, 0.45);
+  box-shadow: 0 4px 20px -4px rgba(245, 158, 11, 0.25);
+}
+
+.ima-empty-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.ima-empty-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.ima-empty-unconfigured .ima-empty-icon {
+  background: rgba(168, 85, 247, 0.18);
+  color: #c084fc;
+}
+
+.ima-empty-ready .ima-empty-icon {
+  background: rgba(245, 158, 11, 0.18);
+  color: #fbbf24;
+}
+
+.ima-empty-icon svg {
+  width: 20px;
+  height: 20px;
+}
+
+.ima-empty-text {
+  display: flex;
+  flex-direction: column;
+}
+
+.ima-empty-title {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text-normal);
+  line-height: 1.3;
+}
+
+.ima-empty-desc {
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.4;
+  margin-top: 2px;
+}
+
+.ima-empty-btn {
+  padding: 6px 16px;
+  border-radius: 8px;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  border: none;
+  color: #ffffff !important;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  white-space: nowrap;
+  flex-shrink: 0;
+  transition: all var(--emil-dur-fast) var(--emil-ease-spring);
+}
+
+.ima-empty-unconfigured .ima-empty-btn {
+  background: linear-gradient(135deg, #a855f7, #7c3aed);
+  box-shadow: 0 3px 12px rgba(168, 85, 247, 0.4);
+}
+.ima-empty-unconfigured .ima-empty-btn:hover {
+  background: linear-gradient(135deg, #b975f8, #8b5cf6);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 16px rgba(168, 85, 247, 0.55);
+}
+
+.ima-empty-ready .ima-empty-btn {
+  background: linear-gradient(135deg, #f59e0b, #d97706);
+  box-shadow: 0 3px 12px rgba(245, 158, 11, 0.4);
+}
+.ima-empty-ready .ima-empty-btn:hover {
+  background: linear-gradient(135deg, #fbbf24, #f59e0b);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 16px rgba(245, 158, 11, 0.55);
+}
+
+.ima-empty-btn:active {
+  transform: scale(0.96);
+}
+
+.ima-dash-title.is-placeholder {
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.ima-dash-status-dot.is-idle {
+  background: var(--text-faint);
+}
+
+/* 同步范围页空状态友好提示 */
+.ima-scope-empty-tip {
+  width: 100%;
+  padding: 9px 14px;
+  border-radius: 8px;
+  background: rgba(168, 85, 247, 0.08);
+  border: 1px dashed rgba(168, 85, 247, 0.35);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-bottom: 12px;
+  box-sizing: border-box;
+}
+
+.ima-scope-tip-icon {
+  display: inline-flex;
+  align-items: center;
+  color: #a855f7;
+}
+.ima-scope-tip-icon svg {
+  width: 14px;
+  height: 14px;
+}
+
+/* 热力图空记录提示 */
+.ima-heat-empty-note {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 10px 0 2px 0;
+  font-size: 11.5px;
+  color: var(--text-faint);
+  border-top: 1px dashed var(--background-modifier-border);
+  margin-top: 10px;
+}
+
+.ima-heat-empty-icon {
+  display: inline-flex;
+  align-items: center;
+  color: var(--text-faint);
+}
+.ima-heat-empty-icon svg {
+  width: 13px;
+  height: 13px;
+}
+
+/* 1. 顶部 Profile 状态区 */
+.ima-dash-profile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin-bottom: 22px;
+  text-align: center;
+}
+
+.ima-dash-avatar {
+  width: 68px;
+  height: 68px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #7c3aed, #4f46e5);
+  color: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 8px 24px -4px rgba(124, 58, 237, 0.45);
+  margin-bottom: 12px;
+  position: relative;
+}
+.ima-dash-avatar::after {
+  content: "";
+  position: absolute;
+  inset: -3px;
+  border-radius: 50%;
+  border: 1.5px solid rgba(167, 139, 250, 0.4);
+}
+.ima-dash-avatar svg {
+  width: 38px;
+  height: 38px;
+  color: #ffffff;
+  display: block;
+}
+
+.ima-dash-title {
+  font-size: 19px;
+  font-weight: 700;
+  color: var(--text-normal);
+  letter-spacing: -0.01em;
+  margin: 0 0 4px 0;
+}
+
+.ima-dash-subtitle {
+  font-size: 12.5px;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ima-dash-status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #10b981;
+  display: inline-block;
+}
+
+/* 2. 核心 5 列 KPI 胶囊横条 (Pill Stats Bar) */
+.ima-kpi-strip {
+  width: 100%;
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 12px;
+  padding: 12px 0;
+  margin-bottom: 24px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+}
+
+.ima-kpi-col {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 0 6px;
+  position: relative;
+}
+.ima-kpi-col:not(:last-child)::after {
+  content: "";
+  position: absolute;
+  right: 0;
+  top: 15%;
+  height: 70%;
+  width: 1px;
+  background: var(--background-modifier-border);
+}
+
+.ima-kpi-val {
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--text-normal);
+  line-height: 1.2;
+  margin-bottom: 3px;
+  font-feature-settings: "tnum";
+}
+
+.ima-kpi-label {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+/* 3. 核心价值卡片专区 (为你产生什么价值) */
+.ima-dash-section-header {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.ima-dash-section-title {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text-normal);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ima-dash-section-tip {
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.ima-val-grid {
+  width: 100%;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  margin-bottom: 26px;
+}
+
+.ima-val-card {
+  background: linear-gradient(180deg, var(--background-secondary) 0%, var(--background-primary) 100%);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 10px;
+  padding: 16px 14px;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  overflow: hidden;
+  transition: all var(--emil-dur-normal) var(--emil-ease-spring);
+}
+.ima-val-card:hover {
+  border-color: var(--background-modifier-border-hover);
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px -6px rgba(0, 0, 0, 0.15);
+}
+
+.ima-val-card::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 15%;
+  right: 15%;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(245, 158, 11, 0.45), transparent);
+}
+.ima-card-green::before {
+  background: linear-gradient(90deg, transparent, rgba(16, 185, 129, 0.45), transparent);
+}
+.ima-card-blue::before {
+  background: linear-gradient(90deg, transparent, rgba(59, 130, 246, 0.45), transparent);
+}
+
+.ima-val-card-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.ima-val-icon {
+  font-size: 14px;
+}
+
+.ima-val-tag-text {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-normal);
+}
+
+.ima-val-hero {
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--text-normal);
+  line-height: 1.15;
+  margin-bottom: 6px;
+  letter-spacing: -0.02em;
+  font-feature-settings: "tnum";
+  display: flex;
+  align-items: baseline;
+  gap: 3px;
+}
+
+.ima-val-unit {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+.ima-val-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  margin-bottom: 8px;
+  width: fit-content;
+}
+.ima-card-amber .ima-val-badge { background: rgba(245, 158, 11, 0.14); color: #d97706; }
+.ima-card-green .ima-val-badge { background: rgba(16, 185, 129, 0.14); color: #059669; }
+.ima-card-blue .ima-val-badge { background: rgba(59, 130, 246, 0.14); color: #2563eb; }
+
+.theme-dark .ima-card-amber .ima-val-badge { color: #fbbf24; }
+.theme-dark .ima-card-green .ima-val-badge { color: #34d399; }
+.theme-dark .ima-card-blue .ima-val-badge { color: #60a5fa; }
+
+.ima-val-desc {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  line-height: 1.45;
+}
+
+/* 4. 同步活动热力图 (Activity Heatmap) */
+.ima-dash-filter-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.ima-dash-pill {
+  padding: 4px 10px;
+  border-radius: 9999px;
+  border: 1px solid var(--background-modifier-border);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 11px;
+  cursor: pointer;
+  transition: all var(--emil-dur-fast) ease;
+}
+.ima-dash-pill:hover {
+  color: var(--text-normal);
+  background: var(--background-modifier-hover);
+}
+.ima-dash-pill.is-active {
+  background: var(--background-modifier-hover);
+  border-color: var(--text-muted);
+  color: var(--text-normal);
+  font-weight: 600;
+}
+
+.ima-dash-pill.ima-pill-sync {
+  margin-left: 6px;
+  background: rgba(245, 158, 11, 0.12);
+  border-color: rgba(245, 158, 11, 0.35);
+  color: #d97706;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.theme-dark .ima-dash-pill.ima-pill-sync {
+  color: #f59e0b;
+}
+
+.ima-heat-card {
+  width: 100%;
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 12px;
+  padding: 16px 18px;
+  position: relative;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+
+.ima-heat-body {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 2px;
+}
+
+.ima-heat-left {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.ima-heat-wrapper {
+  overflow-x: hidden;
+  padding-bottom: 2px;
+}
+
+.ima-heat-grid {
+  display: grid;
+  grid-template-rows: repeat(7, 10px);
+  grid-auto-flow: column;
+  grid-auto-columns: 10px;
+  gap: 3.5px;
+  align-items: center;
+  width: fit-content;
+}
+
+.ima-heat-cell {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  background: var(--background-modifier-border);
+  cursor: pointer;
+  transition: transform 120ms ease;
+  box-sizing: border-box;
+}
+.ima-heat-cell:hover {
+  transform: scale(1.35);
+  z-index: 5;
+  outline: 1.5px solid var(--text-normal);
+}
+
+/* 暖橙色阶定义 */
+.ima-heat-lv-0 { background: rgba(125, 125, 125, 0.12); }
+.ima-heat-lv-1 { background: #78350f; opacity: 0.7; }
+.ima-heat-lv-2 { background: #92400e; }
+.ima-heat-lv-3 { background: #b45309; }
+.ima-heat-lv-4 { background: #f59e0b; }
+.ima-heat-lv-5 { background: #fbbf24; box-shadow: 0 0 5px rgba(251, 191, 36, 0.5); }
+
+.ima-heat-months {
+  display: flex;
+  justify-content: space-between;
+  padding-top: 6px;
+  font-size: 10.5px;
+  color: var(--text-faint);
+  width: 100%;
+  max-width: 100%;
+  gap: 12px;
+}
+
+/* 右侧战报面板：撑满红框原本巨大的空旷区域 */
+.ima-heat-insights {
+  flex: 1 1 0%;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  margin-left: 8px;
+}
+
+.ima-heat-insights.is-hidden {
+  display: none !important;
+}
+
+.ima-insight-card {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.035) 0%, rgba(255, 255, 255, 0.015) 100%);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 9px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  min-height: 84px;
+  box-sizing: border-box;
+  transition: all var(--emil-dur-fast) var(--emil-ease-spring);
+}
+
+.ima-insight-card:hover {
+  border-color: rgba(245, 158, 11, 0.35);
+  background: linear-gradient(180deg, rgba(245, 158, 11, 0.06) 0%, rgba(255, 255, 255, 0.02) 100%);
+  transform: translateY(-1px);
+}
+
+.ima-insight-label {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-muted);
+  line-height: 1.2;
+}
+
+.ima-insight-val {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text-normal);
+  line-height: 1.2;
+  margin: 4px 0 2px 0;
+  font-feature-settings: "tnum";
+  display: flex;
+  align-items: baseline;
+  gap: 2px;
+}
+
+.ima-insight-unit {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+.ima-insight-sub {
+  font-size: 10.5px;
+  color: var(--text-faint);
+  line-height: 1.3;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 全年自适应模式：整年点阵通栏铺满，绝不产生横向滚动条 */
+.ima-heat-card.is-full-year .ima-heat-body {
+  display: block;
+}
+
+.ima-heat-card.is-full-year .ima-heat-left {
+  width: 100%;
+}
+
+.ima-heat-card.is-full-year .ima-heat-wrapper {
+  width: 100%;
+  overflow-x: hidden;
+}
+
+.ima-heat-card.is-full-year .ima-heat-grid {
+  width: 100%;
+  display: grid;
+  grid-template-rows: repeat(7, 1fr);
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  gap: 2.5px;
+}
+
+.ima-heat-card.is-full-year .ima-heat-cell {
+  width: 100%;
+  height: auto;
+  aspect-ratio: 1 / 1;
+}
+
+.ima-heat-card.is-full-year .ima-heat-months {
+  width: 100%;
+  max-width: 100%;
+  display: flex;
+  justify-content: space-between;
+}
+
+@media (max-width: 650px) {
+  .ima-heat-body {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .ima-heat-insights {
+    margin-left: 0;
+    margin-top: 10px;
+  }
+}
+
+.ima-heat-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--background-modifier-border);
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.ima-heat-legend {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.ima-legend-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+}
+
+.ima-heat-tooltip {
+  position: absolute;
+  padding: 5px 10px;
+  background: #181724;
+  border: 1px solid #3d3954;
+  border-radius: 6px;
+  font-size: 11.5px;
+  font-weight: 500;
+  color: #f5f4fb;
+  pointer-events: none;
+  z-index: 1000;
+  display: none;
+  white-space: nowrap;
+  transform: translate(-50%, -100%);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.45);
+}
+
+.ima-heat-tooltip.is-visible {
+  display: block;
+}
+
+/* ==========================================================================
+   Markdown 转换看板 (Markdown Dashboard)
+   ========================================================================== */
+.ima-md-dashboard-card {
+  margin: 14px 0 20px 0;
+  padding: 16px;
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 12px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+}
+
+.ima-md-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.ima-md-card-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-normal);
+}
+
+.ima-md-status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 500;
+  background: var(--background-modifier-border);
+  color: var(--text-muted);
+}
+
+.ima-md-status-badge.is-converting {
+  background: rgba(168, 85, 247, 0.15);
+  color: var(--text-accent);
+  border: 1px solid rgba(168, 85, 247, 0.3);
+}
+
+.ima-md-status-badge.is-completed {
+  background: rgba(52, 211, 153, 0.15);
+  color: var(--text-success, #34d399);
+  border: 1px solid rgba(52, 211, 153, 0.3);
+}
+
+.ima-md-status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.ima-md-status-badge.is-converting .ima-md-status-dot {
+  animation: ima-dot-pulse 1.4s infinite ease-in-out;
+}
+
+@keyframes ima-dot-pulse {
+  0%, 100% { opacity: 0.4; transform: scale(0.9); }
+  50% { opacity: 1; transform: scale(1.2); }
+}
+
+.ima-md-progress-section {
+  margin-bottom: 14px;
+}
+
+.ima-md-progress-meta {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+
+.ima-md-progress-track {
+  width: 100%;
+  height: 6px;
+  background: var(--background-modifier-border);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.ima-md-progress-bar {
+  height: 100%;
+  background: var(--interactive-accent);
+  border-radius: 999px;
+  transition: width 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.ima-md-current-title {
+  margin-top: 6px;
+  font-size: 11.5px;
+  color: var(--text-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ima-md-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+@media (max-width: 520px) {
+  .ima-md-kpi-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+.ima-md-kpi-item {
+  padding: 10px;
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  text-align: center;
+}
+
+.ima-md-kpi-val {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-normal);
+  line-height: 1.2;
+}
+
+.ima-md-kpi-val.is-failed {
+  color: var(--text-warning);
+}
+
+.ima-md-kpi-lbl {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 4px;
+}
+
+.ima-md-card-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding-top: 10px;
+  border-top: 1px solid var(--background-modifier-border);
+}
+
+.ima-md-last-time {
+  font-size: 11.5px;
+  color: var(--text-faint);
 }

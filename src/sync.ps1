@@ -3047,7 +3047,8 @@ function Merge-ImaTextWindowsToBottom(
             [Math]::Abs([double]$viewport.ScrollPercent - [double]$before.ScrollPercent) -lt 0.05
         )
         if ($unchanged) {
-            if ([double]$viewport.ScrollPercent -lt 99 -and [double]$viewport.ViewSize -lt 99) {
+            $isNearBottom = [double]$viewport.ScrollPercent -ge 99
+            if (-not $isNearBottom) {
                 throw "IMA 正文尾部未到达底部且向下滚动没有前进：$($viewport.ScrollPercent)%"
             }
             $unchangedBottomSamples++
@@ -3754,18 +3755,27 @@ function Get-ImaFolderRecords([Windows.Automation.AutomationElement]$Root, [int]
             $record.ScrollStep = $page
             $records.Add($record)
         }
-        $atEnd = -not $scroller -or $scroller.Pattern.Current.VerticalViewSize -ge 99.9 -or $percent -ge 99.9
+        $notScrollable = -not $scroller -or $scroller.Pattern.Current.VerticalViewSize -ge 99.9
+        $atEnd = $notScrollable -or $percent -ge 99.9
         $countComplete = $ExpectedCount -ge 0 -and $records.Count -eq $ExpectedCount
-        if ((Test-ImaNamedElement $list '没有更多内容了') -and ($atEnd -or $countComplete)) {
+        $hasFooter = Test-ImaNamedElement $list '没有更多内容了'
+        if ($countComplete -or ($hasFooter -and $atEnd)) {
             if ($ExpectedCount -ge 0 -and $records.Count -ne $ExpectedCount) {
                 throw "目录内容数量发生变化或列表未完整加载（预期 $ExpectedCount，读取 $($records.Count)），请重试"
             }
             return $records.ToArray()
         }
-        if ($records.Count -gt 10000) { throw '单个目录条目超过 10000，请缩小同步范围' }
-        if (-not $scroller -or $percent -ge 99.9) {
-            throw '无法确认目录列表已到底部，未将部分内容当作最新结果'
+        if ($atEnd) {
+            if ($ExpectedCount -ge 0 -and $records.Count -ne $ExpectedCount) {
+                if ($page -lt 2) {
+                    Start-ImaCancelableSleep 300
+                    continue
+                }
+                throw "目录内容数量发生变化或列表未完整加载（预期 $ExpectedCount，读取 $($records.Count)），请重试"
+            }
+            return $records.ToArray()
         }
+        if ($records.Count -gt 10000) { throw '单个目录条目超过 10000，请缩小同步范围' }
         $nextPercent = [Math]::Min(100, $percent + [Math]::Max(5, $scroller.Pattern.Current.VerticalViewSize * 0.75))
         Set-ImaTitleListScrollPercent $scroller $nextPercent
         Start-ImaCancelableSleep 200
@@ -4463,7 +4473,10 @@ function Test-ImaContentEndVisible([object]$Content, [object]$Viewport) {
 function Test-ImaGeneralBottom([object]$Snapshot) {
     if (-not $Snapshot.Scrollable) { return $true }
     if ($Snapshot.PSObject.Properties['ContentEndVisible'] -and $Snapshot.ContentEndVisible) { return $true }
-    return -not [double]::IsNaN($Snapshot.ScrollPercent) -and $Snapshot.ScrollPercent -ge 99 -and $Snapshot.ScrollPercent -le 105
+    if ([double]::IsNaN($Snapshot.ScrollPercent)) { return $false }
+    # ScrollPercent is relative to the scrollable range; ViewSize cannot be added to it.
+    # Below 99%, only independently observed content geometry can prove completion.
+    return $Snapshot.ScrollPercent -ge 99 -and $Snapshot.ScrollPercent -le 105
 }
 
 function Read-ImaGeneralArticle([string]$Title) {

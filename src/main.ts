@@ -26,8 +26,10 @@ import { DesktopOperationCard } from "./desktop-card";
 import { IMA_SHARE_SYNC_ICON_ID, IMA_SHARE_SYNC_ICON_SVG } from "./icon";
 import { validatePdfStructure } from "./pdf-validation";
 import { runMarkdownConversion, type ConvertTask, type ConvertResultSummary } from "./pdf-to-markdown";
+import { processSinglePdf } from "./pdf-markdown-core";
 import markdownRunnerScript from "ima-markdown-runner";
 import { getStrings } from "./i18n";
+import { calculateDashboardStats, localDateKey, restoreMetrics, type SyncMetrics } from "./dashboard-stats";
 
 const GITHUB_REPOSITORY_URL = "https://github.com/oooing/ima-share-sync";
 
@@ -72,6 +74,19 @@ interface SyncReport {
   status: "success" | "failed" | "canceled";
   summary: string;
   errors: ExtractionError[];
+  destination?: string;
+  metrics?: SyncMetrics;
+}
+
+export interface MarkdownDashboardState {
+  status: "idle" | "converting" | "completed";
+  total: number;
+  current: number;
+  currentTitle?: string;
+  completed: number;
+  skipped: number;
+  failed: number;
+  lastFinishedAt?: number;
 }
 
 const SYNC_REPORTS_PER_PAGE = 20;
@@ -101,6 +116,8 @@ function restoreSyncReports(value: unknown): SyncReport[] {
       status: report.status as SyncReport["status"],
       summary: report.summary.slice(0, 2000),
       errors,
+      ...(typeof report.destination === "string" ? { destination: report.destination } : {}),
+      ...(restoreMetrics(report.metrics) ? { metrics: restoreMetrics(report.metrics) } : {}),
     });
   }
   return reports.sort((left, right) => right.finishedAt - left.finishedAt);
@@ -156,6 +173,8 @@ interface SyncRun {
   pdfValidationAbort?: AbortController;
   savedPdfFiles?: { path: string; title: string }[];
   markdownAbort?: AbortController;
+  destination?: string;
+  metrics?: SyncMetrics;
 }
 
 interface SyncedAttachment {
@@ -569,9 +588,24 @@ class ImaSpeedSyncView extends ItemView {
 
 class ImaSpeedSyncSettingTab extends PluginSettingTab {
   private advancedOpen = false;
-  private activeTabId: "scope" | "markdown" | "notifications" | "general" = "scope";
+  private activeTabId: "stats" | "scope" | "markdown" | "notifications" | "general" = "stats";
   private updateScopeSummary?: () => void;
   private quantitySelect?: HTMLSelectElement;
+  private tabButtons = new Map<string, HTMLElement>();
+  private panels: Record<"stats" | "scope" | "markdown" | "notifications" | "general", HTMLElement> | null = null;
+  private kbInputEl?: HTMLInputElement;
+  private mdDashboardEl?: HTMLElement;
+  private mdStatusTextEl?: HTMLElement;
+  private mdProgressSectionEl?: HTMLElement;
+  private mdProgressBarEl?: HTMLElement;
+  private mdProgressTextEl?: HTMLElement;
+  private mdCurrentTitleEl?: HTMLElement;
+  private mdKpiConvertedEl?: HTMLElement;
+  private mdKpiSkippedEl?: HTMLElement;
+  private mdKpiFailedEl?: HTMLElement;
+  private mdLastTimeEl?: HTMLElement;
+  private mdScanBtnEl?: HTMLButtonElement;
+
   constructor(
     app: Plugin["app"],
     private readonly plugin: ImaSpeedSyncPlugin,
@@ -581,6 +615,32 @@ class ImaSpeedSyncSettingTab extends PluginSettingTab {
 
   override display(): void {
     this.renderSettings();
+  }
+
+  switchTab(tabId: "stats" | "scope" | "markdown" | "notifications" | "general", focusKb = false): void {
+    this.activeTabId = tabId;
+    if (tabId === "stats") this.refreshDashboard();
+    this.tabButtons.forEach((b, id) => b.toggleClass("is-active", id === tabId));
+    if (this.panels) {
+      Object.entries(this.panels).forEach(([id, p]) => p.toggleClass("is-hidden", id !== tabId));
+    }
+    if (focusKb && tabId === "scope" && this.kbInputEl) {
+      window.setTimeout(() => {
+        this.kbInputEl?.focus();
+      }, 60);
+    }
+  }
+
+  refreshDashboard(): void {
+    if (!this.panels || this.activeTabId !== "stats") return;
+    this.panels.stats.empty();
+    this.renderDashboard(this.panels.stats);
+  }
+
+  override hide(): void {
+    this.panels = null;
+    this.tabButtons.clear();
+    this.kbInputEl = undefined;
   }
 
   private renderGeneralScope(containerEl: HTMLElement): void {
@@ -979,6 +1039,10 @@ class ImaSpeedSyncSettingTab extends PluginSettingTab {
     }
 
     const tabsHeader = containerEl.createDiv({ cls: "ima-settings-tabs-header" });
+    const panelStats = containerEl.createDiv({
+      cls: `ima-settings-tab-content${this.activeTabId === "stats" ? "" : " is-hidden"}`,
+      attr: { "data-tab-content": "stats" },
+    });
     const panelScope = containerEl.createDiv({
       cls: `ima-settings-tab-content${this.activeTabId === "scope" ? "" : " is-hidden"}`,
       attr: { "data-tab-content": "scope" },
@@ -996,15 +1060,17 @@ class ImaSpeedSyncSettingTab extends PluginSettingTab {
       attr: { "data-tab-content": "general" },
     });
 
-    const panels: Record<"scope" | "markdown" | "notifications" | "general", HTMLElement> = {
+    this.panels = {
+      stats: panelStats,
       scope: panelScope,
       markdown: panelMarkdown,
       notifications: panelNotifications,
       general: panelGeneral,
     };
 
-    const tabButtons = new Map<string, HTMLElement>();
-    const tabConfigs: { id: "scope" | "markdown" | "notifications" | "general"; label: string; icon: string }[] = [
+    this.tabButtons.clear();
+    const tabConfigs: { id: "stats" | "scope" | "markdown" | "notifications" | "general"; label: string; icon: string }[] = [
+      { id: "stats", label: s.tabStats, icon: "bar-chart-2" },
       { id: "scope", label: s.tabScope, icon: "folder" },
       { id: "markdown", label: s.tabMarkdown, icon: "file-text" },
       { id: "notifications", label: s.tabNotifications, icon: "bell" },
@@ -1019,12 +1085,12 @@ class ImaSpeedSyncSettingTab extends PluginSettingTab {
       setIcon(btn.createSpan(), tab.icon);
       btn.createSpan({ text: tab.label });
       btn.addEventListener("click", () => {
-        this.activeTabId = tab.id;
-        tabButtons.forEach((b, id) => b.toggleClass("is-active", id === tab.id));
-        Object.entries(panels).forEach(([id, p]) => p.toggleClass("is-hidden", id !== tab.id));
+        this.switchTab(tab.id);
       });
-      tabButtons.set(tab.id, btn);
+      this.tabButtons.set(tab.id, btn);
     }
+
+    this.renderDashboard(panelStats);
 
     new Setting(panelGeneral)
       .setName(s.languageName)
@@ -1078,18 +1144,29 @@ class ImaSpeedSyncSettingTab extends PluginSettingTab {
           await this.plugin.saveSettings();
         }));
 
+    const isScopeConfigured = Boolean(
+      this.plugin.settings.knowledgeBaseName.trim() && this.plugin.settings.folderName.trim(),
+    );
+    if (!isScopeConfigured) {
+      const scopeTip = panelScope.createDiv({ cls: "ima-scope-empty-tip" });
+      const tipIcon = scopeTip.createSpan({ cls: "ima-scope-tip-icon" });
+      setIcon(tipIcon, "info");
+      scopeTip.createSpan({ text: s.scopeEmptyTip });
+    }
+
     new Setting(panelScope)
       .setName(s.kbName)
       .setDesc(s.kbDesc)
-      .addText((text) =>
+      .addText((text) => {
+        this.kbInputEl = text.inputEl;
         text
           .setPlaceholder(s.kbPlaceholder)
           .setValue(this.plugin.settings.knowledgeBaseName)
           .onChange(async (value) => {
             this.plugin.settings.knowledgeBaseName = value.trim();
             await this.plugin.saveSettings();
-          }),
-      );
+          });
+      });
 
     new Setting(panelScope)
       .setName(s.sourceFolderName)
@@ -1198,6 +1275,8 @@ class ImaSpeedSyncSettingTab extends PluginSettingTab {
       );
 
     if (this.plugin.settings.enableMarkdownConversion) {
+      this.renderMarkdownDashboard(panelMarkdown);
+
       new Setting(panelMarkdown)
         .setName(s.markdownScopeName)
         .setDesc(s.markdownScopeDesc)
@@ -1228,9 +1307,11 @@ class ImaSpeedSyncSettingTab extends PluginSettingTab {
         .setName(s.manualScanName)
         .setDesc(s.manualScanDesc)
         .addButton((button) =>
-          button.setButtonText(s.manualScanBtn).onClick(async () => {
-            await this.plugin.convertAllVaultPdfFiles(true);
-          }),
+          button
+            .setButtonText(s.manualScanBtn)
+            .onClick(() => {
+              void this.plugin.convertAllVaultPdfFiles(true);
+            }),
         );
     }
 
@@ -1239,9 +1320,423 @@ class ImaSpeedSyncSettingTab extends PluginSettingTab {
       text: s.versionText(this.plugin.manifest.version),
     });
   }
+
+  updateMarkdownDashboard(): void {
+    if (!this.mdDashboardEl || !this.mdDashboardEl.isConnected) return;
+    const s = getStrings(this.plugin.settings.language);
+    const state = this.plugin.markdownDashboardState;
+
+    if (this.mdStatusTextEl) {
+      const badge = this.mdStatusTextEl.parentElement;
+      if (badge) {
+        badge.className = `ima-md-status-badge is-${state.status}`;
+      }
+      this.mdStatusTextEl.textContent =
+        state.status === "converting"
+          ? s.mdStatusConverting
+          : state.status === "completed"
+            ? s.mdStatusCompleted
+            : s.mdStatusIdle;
+    }
+
+    if (this.mdProgressSectionEl) {
+      const showProgress = state.status === "converting" || (state.status === "completed" && state.total > 0);
+      this.mdProgressSectionEl.style.display = showProgress ? "block" : "none";
+
+      const pct = state.total > 0 ? Math.round((state.current / state.total) * 100) : (state.status === "completed" ? 100 : 0);
+      if (this.mdProgressBarEl) {
+        this.mdProgressBarEl.style.width = `${pct}%`;
+      }
+      if (this.mdProgressTextEl) {
+        this.mdProgressTextEl.textContent = s.mdProgressText(state.current, state.total, pct);
+      }
+      if (this.mdCurrentTitleEl) {
+        this.mdCurrentTitleEl.style.display = state.status === "converting" && state.currentTitle ? "block" : "none";
+        this.mdCurrentTitleEl.textContent = state.currentTitle ? `当前正在处理：${state.currentTitle}` : "";
+      }
+    }
+
+    if (this.mdKpiConvertedEl) {
+      this.mdKpiConvertedEl.textContent = String(state.completed);
+    }
+    if (this.mdKpiSkippedEl) {
+      this.mdKpiSkippedEl.textContent = String(state.skipped);
+    }
+    if (this.mdKpiFailedEl) {
+      this.mdKpiFailedEl.textContent = String(state.failed);
+      this.mdKpiFailedEl.className = `ima-md-kpi-val${state.failed > 0 ? " is-failed" : ""}`;
+    }
+
+    if (this.mdLastTimeEl) {
+      this.mdLastTimeEl.textContent = state.lastFinishedAt
+        ? s.mdLastConverted(new Date(state.lastFinishedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }))
+        : s.mdNeverConverted;
+    }
+
+    if (this.mdScanBtnEl) {
+      this.mdScanBtnEl.disabled = state.status === "converting";
+      this.mdScanBtnEl.textContent = state.status === "converting" ? s.mdBtnConverting : s.manualScanBtn;
+    }
+  }
+
+  private renderMarkdownDashboard(containerEl: HTMLElement): void {
+    const s = getStrings(this.plugin.settings.language);
+    const card = containerEl.createDiv({ cls: "ima-md-dashboard-card" });
+    this.mdDashboardEl = card;
+
+    const header = card.createDiv({ cls: "ima-md-card-header" });
+    header.createDiv({ cls: "ima-md-card-title", text: s.mdStatusHeading });
+    const badge = header.createDiv({ cls: "ima-md-status-badge is-idle" });
+    badge.createSpan({ cls: "ima-md-status-dot" });
+    this.mdStatusTextEl = badge.createSpan({ text: s.mdStatusIdle });
+
+    this.mdProgressSectionEl = card.createDiv({ cls: "ima-md-progress-section" });
+    const meta = this.mdProgressSectionEl.createDiv({ cls: "ima-md-progress-meta" });
+    this.mdProgressTextEl = meta.createSpan({ text: "" });
+    const track = this.mdProgressSectionEl.createDiv({ cls: "ima-md-progress-track" });
+    this.mdProgressBarEl = track.createDiv({ cls: "ima-md-progress-bar" });
+    this.mdCurrentTitleEl = this.mdProgressSectionEl.createDiv({ cls: "ima-md-current-title" });
+
+    const kpiGrid = card.createDiv({ cls: "ima-md-kpi-grid" });
+
+    const itemConverted = kpiGrid.createDiv({ cls: "ima-md-kpi-item" });
+    this.mdKpiConvertedEl = itemConverted.createDiv({ cls: "ima-md-kpi-val", text: "0" });
+    itemConverted.createDiv({ cls: "ima-md-kpi-lbl", text: s.mdKpiConverted });
+
+    const itemSkipped = kpiGrid.createDiv({ cls: "ima-md-kpi-item" });
+    this.mdKpiSkippedEl = itemSkipped.createDiv({ cls: "ima-md-kpi-val", text: "0" });
+    itemSkipped.createDiv({ cls: "ima-md-kpi-lbl", text: s.mdKpiSkipped });
+
+    const itemFailed = kpiGrid.createDiv({ cls: "ima-md-kpi-item" });
+    this.mdKpiFailedEl = itemFailed.createDiv({ cls: "ima-md-kpi-val", text: "0" });
+    itemFailed.createDiv({ cls: "ima-md-kpi-lbl", text: s.mdKpiFailed });
+
+    const footer = card.createDiv({ cls: "ima-md-card-footer" });
+    this.mdLastTimeEl = footer.createDiv({ cls: "ima-md-last-time", text: s.mdNeverConverted });
+
+    this.mdScanBtnEl = footer.createEl("button", {
+      cls: "mod-cta ima-md-scan-btn",
+      text: s.manualScanBtn,
+      attr: { type: "button" },
+    });
+    this.mdScanBtnEl.addEventListener("click", () => {
+      void this.plugin.convertAllVaultPdfFiles(true);
+    });
+
+    this.updateMarkdownDashboard();
+  }
+
+  private renderDashboard(containerEl: HTMLElement): void {
+    const s = getStrings(this.plugin.settings.language);
+    const settings = this.plugin.settings;
+    let destination = "";
+    try { destination = this.plugin.getEffectiveDestinationPath(settings); }
+    catch { /* Invalid/incomplete settings have no local scope yet. */ }
+    const reports = this.plugin.syncReports;
+    const stats = calculateDashboardStats(this.app.vault.getFiles(), reports, destination);
+    const mdCount = stats.markdown;
+    const totalScanned = stats.checked;
+    const totalSynced = stats.files;
+    const totalRuns = reports.length;
+    const dateMap = stats.dateMap;
+    const displayStreak = stats.streak;
+    const today = new Date();
+    const savedHours = (stats.saved * 10 / 60).toFixed(1);
+    const savedDays = (Number(savedHours) / 8).toFixed(1);
+    const mbSize = (stats.bytes / 1024 / 1024).toFixed(1);
+    const autoRate = stats.successRate;
+
+    const isConfigured = Boolean(settings.knowledgeBaseName.trim() && settings.folderName.trim());
+    const isNeverSynced = totalRuns === 0 && totalSynced === 0;
+
+    // 2. DOM 渲染
+    const dashWrapper = containerEl.createDiv({ cls: "ima-dashboard-container" });
+    dashWrapper.createDiv({ cls: "ima-dash-section-tip", text: s.dashStatsNote });
+
+    // 醒目空状态引导横幅 (Onboarding Empty State)
+    if (!isConfigured) {
+      const emptyBanner = dashWrapper.createDiv({ cls: "ima-dash-empty-banner ima-empty-unconfigured" });
+      const left = emptyBanner.createDiv({ cls: "ima-empty-left" });
+      const iconWrap = left.createDiv({ cls: "ima-empty-icon" });
+      setIcon(iconWrap, "sparkles");
+      const textWrap = left.createDiv({ cls: "ima-empty-text" });
+      textWrap.createDiv({ cls: "ima-empty-title", text: s.dashEmptyUnconfiguredTitle });
+      textWrap.createDiv({ cls: "ima-empty-desc", text: s.dashEmptyUnconfiguredDesc });
+      const btn = emptyBanner.createEl("button", {
+        cls: "ima-empty-btn",
+        text: s.dashEmptyUnconfiguredBtn,
+        attr: { type: "button" },
+      });
+      btn.addEventListener("click", () => {
+        this.switchTab("scope", true);
+      });
+    } else if (isNeverSynced) {
+      const emptyBanner = dashWrapper.createDiv({ cls: "ima-dash-empty-banner ima-empty-ready" });
+      const left = emptyBanner.createDiv({ cls: "ima-empty-left" });
+      const iconWrap = left.createDiv({ cls: "ima-empty-icon" });
+      setIcon(iconWrap, "zap");
+      const textWrap = left.createDiv({ cls: "ima-empty-text" });
+      textWrap.createDiv({ cls: "ima-empty-title", text: s.dashEmptyNeverSyncedTitle });
+      textWrap.createDiv({ cls: "ima-empty-desc", text: s.dashEmptyNeverSyncedDesc });
+      const btn = emptyBanner.createEl("button", {
+        cls: "ima-empty-btn",
+        text: s.dashEmptyNeverSyncedBtn,
+        attr: { type: "button" },
+      });
+      btn.addEventListener("click", () => {
+        void this.plugin.sync(true);
+      });
+    }
+
+    // 2.1 顶部 Profile
+    const profile = dashWrapper.createDiv({ cls: "ima-dash-profile" });
+    const avatar = profile.createDiv({ cls: "ima-dash-avatar" });
+    setIcon(avatar, IMA_SHARE_SYNC_ICON_ID);
+    const kbTitle = settings.knowledgeBaseName.trim() || s.dashProfileUnconfigured;
+    profile.createDiv({
+      cls: `ima-dash-title${!settings.knowledgeBaseName.trim() ? " is-placeholder" : ""}`,
+      text: kbTitle,
+    });
+    const subTitle = profile.createDiv({ cls: "ima-dash-subtitle" });
+    subTitle.createSpan({ cls: `ima-dash-status-dot${isNeverSynced ? " is-idle" : ""}` });
+    subTitle.createSpan({
+      text: isNeverSynced ? s.dashProfileNeverSynced : s.dashProfileSubtitle(totalSynced, savedHours),
+    });
+
+    // 2.2 核心 5 列 KPI 胶囊横条
+    const kpiStrip = dashWrapper.createDiv({ cls: "ima-kpi-strip" });
+    const kpis = [
+      { val: `${totalScanned}`, label: s.dashKpiScanned },
+      { val: `${totalSynced}`, label: s.dashKpiSynced },
+      { val: `${mdCount}`, label: s.dashKpiToMd },
+      { val: `~${savedHours} h`, label: s.dashKpiSavedHours },
+      { val: `${displayStreak}`, label: s.dashKpiStreak },
+    ];
+    for (const item of kpis) {
+      const col = kpiStrip.createDiv({ cls: "ima-kpi-col" });
+      col.createDiv({ cls: "ima-kpi-val", text: item.val });
+      col.createDiv({ cls: "ima-kpi-label", text: item.label });
+    }
+
+    // 2.3 核心价值回报三大卡片
+    const valHeader = dashWrapper.createDiv({ cls: "ima-dash-section-header" });
+    const valTitle = valHeader.createDiv({ cls: "ima-dash-section-title" });
+    setIcon(valTitle.createSpan(), "award");
+    valTitle.createSpan({ text: s.dashSecValue });
+    valHeader.createDiv({ cls: "ima-dash-section-tip", text: s.dashValFormula });
+
+    const valGrid = dashWrapper.createDiv({ cls: "ima-val-grid" });
+
+    // 卡片 1：挽回工作时间
+    const card1 = valGrid.createDiv({ cls: "ima-val-card ima-card-amber" });
+    const c1Head = card1.createDiv({ cls: "ima-val-card-header" });
+    c1Head.createSpan({ cls: "ima-val-icon", text: "⏱" });
+    c1Head.createSpan({ cls: "ima-val-tag-text", text: s.dashCard1Title });
+    const c1Hero = card1.createDiv({ cls: "ima-val-hero" });
+    c1Hero.createSpan({ cls: "ima-val-num", text: savedHours });
+    c1Hero.createSpan({ cls: "ima-val-unit", text: s.dashUnitHours });
+    card1.createDiv({ cls: "ima-val-badge", text: s.dashCard1Sub(savedDays) });
+    card1.createDiv({ cls: "ima-val-desc", text: s.dashCard1Desc });
+
+    // 卡片 2：构筑知识资产
+    const card2 = valGrid.createDiv({ cls: "ima-val-card ima-card-green" });
+    const c2Head = card2.createDiv({ cls: "ima-val-card-header" });
+    c2Head.createSpan({ cls: "ima-val-icon", text: "📚" });
+    c2Head.createSpan({ cls: "ima-val-tag-text", text: s.dashCard2Title });
+    const c2Hero = card2.createDiv({ cls: "ima-val-hero" });
+    c2Hero.createSpan({ cls: "ima-val-num", text: mbSize });
+    c2Hero.createSpan({ cls: "ima-val-unit", text: "MB" });
+    card2.createDiv({ cls: "ima-val-badge", text: s.dashCard2Sub(String(totalSynced)) });
+    card2.createDiv({ cls: "ima-val-desc", text: s.dashCard2Desc });
+
+    // 卡片 3：心智负担释放
+    const card3 = valGrid.createDiv({ cls: "ima-val-card ima-card-blue" });
+    const c3Head = card3.createDiv({ cls: "ima-val-card-header" });
+    c3Head.createSpan({ cls: "ima-val-icon", text: "🧠" });
+    c3Head.createSpan({ cls: "ima-val-tag-text", text: s.dashCard3Title });
+    const c3Hero = card3.createDiv({ cls: "ima-val-hero" });
+    c3Hero.createSpan({ cls: "ima-val-num", text: autoRate === null ? "—" : `${autoRate}%` });
+    c3Hero.createSpan({ cls: "ima-val-unit", text: s.dashUnitAutoRate });
+    card3.createDiv({ cls: "ima-val-badge", text: s.dashCard3Sub(displayStreak) });
+    card3.createDiv({ cls: "ima-val-desc", text: s.dashCard3Desc });
+
+    // 2.4 同步活动热力图
+    const actHeader = dashWrapper.createDiv({ cls: "ima-dash-section-header" });
+    const actTitle = actHeader.createDiv({ cls: "ima-dash-section-title" });
+    setIcon(actTitle.createSpan(), "activity");
+    actTitle.createSpan({ text: s.dashSecActivity });
+
+    const filterRow = actHeader.createDiv({ cls: "ima-dash-filter-row" });
+    const btnDay = filterRow.createEl("button", { cls: "ima-dash-pill is-active", text: s.dashFilterDay });
+    const btnWeek = filterRow.createEl("button", { cls: "ima-dash-pill", text: s.dashFilterWeek });
+    const btnTotal = filterRow.createEl("button", { cls: "ima-dash-pill", text: s.dashFilterTotal });
+
+    // 立即检查同步按钮
+    const btnSyncNow = filterRow.createEl("button", { cls: "ima-dash-pill ima-pill-sync", attr: { type: "button" } });
+    setIcon(btnSyncNow.createSpan(), "refresh-cw");
+    btnSyncNow.createSpan({ text: s.dashBtnCheckSync });
+    btnSyncNow.addEventListener("click", () => {
+      void this.plugin.sync(true);
+    });
+
+    const heatCard = dashWrapper.createDiv({ cls: "ima-heat-card" });
+    const heatBody = heatCard.createDiv({ cls: "ima-heat-body" });
+    const heatLeft = heatBody.createDiv({ cls: "ima-heat-left" });
+    const heatWrapper = heatLeft.createDiv({ cls: "ima-heat-wrapper" });
+    const heatGrid = heatWrapper.createDiv({ cls: "ima-heat-grid" });
+    const monthsRow = heatWrapper.createDiv({ cls: "ima-heat-months" });
+    const insightsPanel = heatBody.createDiv({ cls: "ima-heat-insights" });
+
+    const tooltip = heatCard.createDiv({ cls: "ima-heat-tooltip" });
+
+    const heatFooter = heatCard.createDiv({ cls: "ima-heat-footer" });
+    const summarySpan = heatFooter.createSpan({ cls: "ima-heat-summary" });
+
+    const legend = heatFooter.createDiv({ cls: "ima-heat-legend" });
+    legend.createSpan({ text: s.dashLegendLess });
+    for (let lv = 0; lv <= 5; lv++) {
+      legend.createDiv({ cls: `ima-legend-dot ima-heat-lv-${lv}` });
+    }
+    legend.createSpan({ text: s.dashLegendMore });
+
+    const renderHeatmap = (weeks: number) => {
+      heatGrid.empty();
+      monthsRow.empty();
+      insightsPanel.empty();
+
+      const totalDays = weeks * 7;
+      let periodRuns = 0;
+      let maxDayStr = "";
+      let maxDayCount = 0;
+      const monthNames: string[] = [];
+      let lastMonth = -1;
+
+      for (let i = 0; i < totalDays; i++) {
+        const daysAgo = totalDays - 1 - i;
+        const d = new Date(today);
+        d.setDate(today.getDate() - daysAgo);
+        const dStr = localDateKey(d);
+        const count = (dStr ? dateMap[dStr] : 0) ?? 0;
+        if (count > 0) {
+          periodRuns += count;
+          if (count > maxDayCount) {
+            maxDayCount = count;
+            maxDayStr = dStr;
+          }
+        }
+
+        const currentMonth = d.getMonth() + 1;
+        if (currentMonth !== lastMonth) {
+          lastMonth = currentMonth;
+          monthNames.push(s.dashMonth(currentMonth));
+        }
+
+        let level = 0;
+        if (count > 0) {
+          if (count === 1) level = 1;
+          else if (count <= 2) level = 2;
+          else if (count <= 4) level = 3;
+          else if (count <= 7) level = 4;
+          else level = 5;
+        }
+        const cell = heatGrid.createDiv({ cls: `ima-heat-cell ima-heat-lv-${level}` });
+        const tipText = s.dashHeatTip(dStr, count);
+        cell.setAttr("aria-label", tipText);
+        cell.setAttr("data-tooltip-position", "top");
+        cell.setAttr("title", tipText);
+
+        cell.addEventListener("mouseenter", () => {
+          if (!tooltip || typeof cell.getBoundingClientRect !== "function" || typeof heatCard.getBoundingClientRect !== "function") return;
+          const cardRect = heatCard.getBoundingClientRect();
+          const cellRect = cell.getBoundingClientRect();
+          tooltip.setText(tipText);
+          const relLeft = (cellRect.left - cardRect.left) + cellRect.width / 2;
+          const relTop = (cellRect.top - cardRect.top) - 10;
+          if (tooltip.style) {
+            tooltip.style.left = `${relLeft}px`;
+            tooltip.style.top = `${relTop}px`;
+          }
+          tooltip.toggleClass("is-visible", true);
+        });
+        cell.addEventListener("mouseleave", () => {
+          if (tooltip) tooltip.toggleClass("is-visible", false);
+        });
+      }
+
+      for (const m of monthNames) {
+        monthsRow.createSpan({ text: m });
+      }
+
+      const isFullYear = weeks === 52;
+      heatCard.toggleClass("is-full-year", isFullYear);
+
+      if (isFullYear) {
+        insightsPanel.toggleClass("is-hidden", true);
+        summarySpan.setText(s.dashHeatSummary(periodRuns, (periodRuns * 10 / 60).toFixed(1)));
+      } else {
+        insightsPanel.toggleClass("is-hidden", false);
+        const periodHours = ((periodRuns * 10) / 60).toFixed(1);
+        summarySpan.setText(s.dashPeriodSummary(weeks === 13 ? 3 : 6, periodRuns, periodHours));
+
+        // 渲染右侧 3 个指标卡（撑满红框空白区域）
+        const avgPerWeek = (periodRuns / (weeks || 1)).toFixed(1);
+        let peakDayFormatted = "-";
+        if (maxDayStr) {
+          const parts = maxDayStr.split("-");
+          peakDayFormatted = parts.length === 3 ? s.dashMonthDay(Number(parts[1]), Number(parts[2])) : maxDayStr;
+        }
+
+        // 卡片 1：本期存入
+        const card1 = insightsPanel.createDiv({ cls: "ima-insight-card" });
+        card1.createDiv({ cls: "ima-insight-label", text: s.dashInsightPeriodSynced });
+        const v1 = card1.createDiv({ cls: "ima-insight-val" });
+        v1.createSpan({ text: String(periodRuns) });
+        v1.createSpan({ cls: "ima-insight-unit", text: s.dashItemsUnit });
+        card1.createDiv({ cls: "ima-insight-sub", text: s.dashInsightAvgWeek(avgPerWeek) });
+
+        // 卡片 2：省下时间
+        const card2 = insightsPanel.createDiv({ cls: "ima-insight-card" });
+        card2.createDiv({ cls: "ima-insight-label", text: s.dashInsightPeriodHours });
+        const v2 = card2.createDiv({ cls: "ima-insight-val" });
+        v2.createSpan({ text: periodHours });
+        v2.createSpan({ cls: "ima-insight-unit", text: "h" });
+        card2.createDiv({ cls: "ima-insight-sub", text: s.dashInsightSavedDesc });
+
+        // 卡片 3：单日最高
+        const card3 = insightsPanel.createDiv({ cls: "ima-insight-card" });
+        card3.createDiv({ cls: "ima-insight-label", text: s.dashInsightPeakDay });
+        const v3 = card3.createDiv({ cls: "ima-insight-val" });
+        v3.createSpan({ text: peakDayFormatted });
+        card3.createDiv({ cls: "ima-insight-sub", text: maxDayCount > 0 ? s.dashInsightPeakDesc(maxDayCount) : s.dashNoPeak });
+      }
+    };
+
+    const filterOptions = [
+      { btn: btnDay, weeks: 13 },
+      { btn: btnWeek, weeks: 26 },
+      { btn: btnTotal, weeks: 52 },
+    ];
+
+    filterOptions.forEach(({ btn, weeks }) => {
+      btn.addEventListener("click", () => {
+        filterOptions.forEach((opt) => opt.btn.toggleClass("is-active", opt.btn === btn));
+        renderHeatmap(weeks);
+      });
+    });
+
+    renderHeatmap(13);
+
+    if (isNeverSynced) {
+      const emptyNote = heatCard.createDiv({ cls: "ima-heat-empty-note" });
+      const emptyIcon = emptyNote.createSpan({ cls: "ima-heat-empty-icon" });
+      setIcon(emptyIcon, "calendar");
+      emptyNote.createSpan({ text: s.dashHeatEmptyTip });
+    }
+  }
 }
 
 export default class ImaSpeedSyncPlugin extends Plugin {
+  private settingsTab?: ImaSpeedSyncSettingTab;
   override settings: ImaSpeedSyncSettings = { ...DEFAULT_SETTINGS };
   private running = false;
   private currentProcess: ChildProcess | null = null;
@@ -1251,8 +1746,8 @@ export default class ImaSpeedSyncPlugin extends Plugin {
   private activeRun: SyncRun | null = null;
   private nextRunId = 1;
   private unloaded = false;
-  private syncReports: SyncReport[] = [];
-  private syncedAttachments: SyncedAttachment[] = [];
+  syncReports: SyncReport[] = [];
+  syncedAttachments: SyncedAttachment[] = [];
   private historyPanel: SyncHistoryPanel | null = null;
   private ribbonEl: HTMLElement | null = null;
   private activeNotice: { notice: Notice; interactive: boolean; failed: boolean } | null = null;
@@ -1260,6 +1755,20 @@ export default class ImaSpeedSyncPlugin extends Plugin {
   private reportSaveFailed = false;
   private operationCards = new Set<DesktopOperationCard>();
   private deferredSyncTimer: number | null = null;
+  markdownDashboardState: MarkdownDashboardState = {
+    status: "idle",
+    total: 0,
+    current: 0,
+    completed: 0,
+    skipped: 0,
+    failed: 0,
+  };
+
+  updateMarkdownDashboardUI(): void {
+    if (this.settingsTab) {
+      this.settingsTab.updateMarkdownDashboard();
+    }
+  }
 
   get isRunning(): boolean {
     return this.running;
@@ -1299,7 +1808,8 @@ export default class ImaSpeedSyncPlugin extends Plugin {
     }
 
     const s = getStrings();
-    this.addSettingTab(new ImaSpeedSyncSettingTab(this.app, this));
+    this.settingsTab = new ImaSpeedSyncSettingTab(this.app, this);
+    this.addSettingTab(this.settingsTab);
     this.registerView(VIEW_TYPE, (leaf) => new ImaSpeedSyncView(leaf, this));
     this.ribbonEl = this.addRibbonIcon(IMA_SHARE_SYNC_ICON_ID, s.ribbonTooltip, () => {
       if (this.settings.notificationsEnabled && this.settings.showErrorBadge && this.hasUnreadSyncFailure()) {
@@ -1344,6 +1854,7 @@ export default class ImaSpeedSyncPlugin extends Plugin {
 
     run.cancellationRequested = true;
     run.pdfValidationAbort?.abort();
+    run.markdownAbort?.abort();
     this.cancellationRequested = true;
     void this.writeCancellationMarker(run).catch((error) => {
       console.error("卸载 IMA Share Sync 时写入取消标记失败", error);
@@ -1478,6 +1989,10 @@ export default class ImaSpeedSyncPlugin extends Plugin {
 
   private async recordSyncReport(report: SyncReport, showNotice = true): Promise<void> {
     if (this.unloaded) return;
+    if (this.activeRun?.metrics) {
+      report.metrics = { ...this.activeRun.metrics };
+      report.destination = this.activeRun.destination;
+    }
     report.id = randomUUID();
     report.read = false;
     // Normalize only the new record; never discard older runs or repeatedly re-parse history.
@@ -1711,6 +2226,7 @@ export default class ImaSpeedSyncPlugin extends Plugin {
 
   refreshView(): void {
     this.updateNotificationPreferences();
+    this.settingsTab?.refreshDashboard();
     for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE)) {
       const view = leaf.view;
       if (view instanceof ImaSpeedSyncView) view.render();
@@ -1758,6 +2274,8 @@ export default class ImaSpeedSyncPlugin extends Plugin {
       }
       this.assertRunActive(run);
       const destinationPath = this.validateSettings(settings);
+      run.destination = destinationPath;
+      run.metrics = { checked: 0, saved: 0 };
       await this.ensureFolder(destinationPath);
       this.assertRunActive(run);
       const articleIndex = await this.buildArticleIndex(destinationPath, settings.contentMode === "general");
@@ -1797,6 +2315,7 @@ export default class ImaSpeedSyncPlugin extends Plugin {
       if (!extractionCanceled) this.assertRunActive(run);
 
       counts.skipped = result.skippedTitles?.length ?? 0;
+      run.metrics.checked = (result.items?.length ?? 0) + counts.skipped + (result.errors ?? []).filter(error => error.title.trim()).length;
       issues.push(...(result.errors ?? []));
       const items = [...(result.items ?? [])].sort(
         (left, right) =>
@@ -1832,6 +2351,7 @@ export default class ImaSpeedSyncPlugin extends Plugin {
             extractionCanceled,
           );
           counts[status]++;
+          run.metrics.saved = counts.created + counts.updated;
           if (status === "conflict") issues.push({ title: item.sourceTitle, message: "同名冲突：无法确认是同一篇文章，已保留原文件，请检查后重试。" });
         } catch (error) {
           if (error instanceof SyncCanceledError) throw error;
@@ -1854,7 +2374,7 @@ export default class ImaSpeedSyncPlugin extends Plugin {
       }
 
       if (!extractionCanceled && settings.enableMarkdownConversion && run.savedPdfFiles && run.savedPdfFiles.length > 0) {
-        this.updateOperationCard(run, "正在生成 Markdown 笔记…");
+        this.updateOperationCard(run, `正在生成 Markdown 笔记 (0/${run.savedPdfFiles.length})…`);
         try {
           const converted = await this.convertPdfFilesToMarkdown(run.savedPdfFiles, interactive, run);
           this.assertRunActive(run);
@@ -2719,36 +3239,77 @@ export default class ImaSpeedSyncPlugin extends Plugin {
     }
 
     let notice: Notice | undefined;
-    if (showNotice) {
+    const canNotifyManual = this.canNotify(true, false);
+    if (showNotice && canNotifyManual) {
       notice = new Notice(`正在转换 Markdown 笔记 (0/${tasks.length})...`, 0);
     }
 
     const abortController = new AbortController();
     if (run) run.markdownAbort = abortController;
 
+    this.markdownDashboardState = {
+      status: "converting",
+      total: tasks.length,
+      current: 0,
+      completed: 0,
+      skipped: 0,
+      failed: 0,
+    };
+    this.updateMarkdownDashboardUI();
+
+    if (run) {
+      this.updateOperationCard(run, `正在生成 Markdown 笔记 (0/${tasks.length})…`);
+    }
+
     try {
       const result = await runMarkdownConversion(
         tasks,
         markdownRunnerScript,
         (progress, total) => {
+          const task = tasks[progress - 1];
+          const rawTitle = task?.title?.trim() ?? "";
+          const displayTitle = rawTitle
+            ? `：${rawTitle.length > 20 ? rawTitle.slice(0, 20) + "…" : rawTitle}`
+            : "";
+          this.markdownDashboardState.current = progress;
+          this.markdownDashboardState.currentTitle = rawTitle;
+          this.updateMarkdownDashboardUI();
+
           if (notice) {
-            notice.setMessage(`正在转换 Markdown 笔记 (${progress}/${total})...`);
+            notice.setMessage(`正在转换 Markdown 笔记 (${progress}/${total})${displayTitle}`);
+          }
+          if (run) {
+            this.updateOperationCard(run, `正在生成 Markdown 笔记 (${progress}/${total})${displayTitle}`);
           }
         },
         abortController.signal,
+        processSinglePdf,
       );
       if (notice) notice.hide();
-      if (showNotice) {
-        new Notice(
+      this.markdownDashboardState = {
+        status: "completed",
+        total: tasks.length,
+        current: tasks.length,
+        completed: result.completed,
+        skipped: result.skipped,
+        failed: result.failed,
+        lastFinishedAt: Date.now(),
+      };
+      this.updateMarkdownDashboardUI();
+
+      if (showNotice && canNotifyManual) {
+        this.notifyManual(
           `Markdown 转换完成：新增/更新 ${result.completed} 篇，跳过 ${result.skipped} 篇${result.failed ? `，失败 ${result.failed} 篇` : ""}`,
         );
       }
       return result;
     } catch (err) {
+      this.markdownDashboardState.status = "idle";
+      this.updateMarkdownDashboardUI();
       if (notice) notice.hide();
       console.error("Markdown 转换执行异常:", err);
-      if (showNotice) {
-        new Notice(`Markdown 转换失败: ${err instanceof Error ? err.message : String(err)}`);
+      if (showNotice && this.canNotify(true, true)) {
+        this.notify(`Markdown 转换失败: ${err instanceof Error ? err.message : String(err)}`, true, true, 8000);
       }
       if (run) throw err;
     } finally {
@@ -2784,11 +3345,11 @@ export default class ImaSpeedSyncPlugin extends Plugin {
     await walk(fullTargetDir);
 
     if (!pdfList.length) {
-      if (interactive) new Notice(`未在目标目录 [${targetDir}] 下找到任何 PDF 文件。`);
+      if (interactive && this.canNotify(interactive, false)) this.notifyManual(`未在目标目录 [${targetDir}] 下找到任何 PDF 文件。`);
       return;
     }
 
-    if (interactive) new Notice(`扫描到 ${pdfList.length} 篇 PDF，开始生成 Markdown...`);
+    if (interactive && this.canNotify(interactive, false)) this.notifyManual(`扫描到 ${pdfList.length} 篇 PDF，开始生成 Markdown...`);
     await this.convertPdfFilesToMarkdown(pdfList, interactive);
   }
 }

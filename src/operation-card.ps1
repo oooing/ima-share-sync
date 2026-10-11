@@ -13,7 +13,7 @@ if ($SmokeTest) {
         Title="IMA Share Sync · 桌面操作提示" Width="340" SizeToContent="Height"
         WindowStyle="None" ResizeMode="NoResize" AllowsTransparency="True" Background="Transparent"
         ShowInTaskbar="False" ShowActivated="False" Topmost="True" FontFamily="Microsoft YaHei UI">
-  <Border Background="#161620" BorderBrush="#36334A" BorderThickness="1.2" CornerRadius="16" Padding="17,16,17,16">
+  <Border Background="#15141E" BorderBrush="#2D293E" BorderThickness="1.2" CornerRadius="16" Padding="17,16,17,16">
     <StackPanel>
       <DockPanel LastChildFill="False">
         <StackPanel Orientation="Horizontal" DockPanel.Dock="Left">
@@ -47,51 +47,122 @@ if ($SmokeTest) {
           </Viewbox>
           <TextBlock Text="IMA Share Sync" Foreground="#C8ACFF" FontSize="12.5" FontWeight="SemiBold" VerticalAlignment="Center"/>
         </StackPanel>
-        <Border DockPanel.Dock="Right" Background="#261A3D" BorderBrush="#4A2F78" BorderThickness="1" CornerRadius="999" Padding="8,2" VerticalAlignment="Center">
+        <Border x:Name="StatusBadge" DockPanel.Dock="Right" Background="#251B38" BorderBrush="#452E6B" BorderThickness="1" CornerRadius="999" Padding="8,2.5" VerticalAlignment="Center">
           <StackPanel Orientation="Horizontal">
-            <Ellipse Width="6" Height="6" Fill="#A855F7" Margin="0,0,5,0" VerticalAlignment="Center"/>
-            <TextBlock Text="SYNC" Foreground="#D8B4FE" FontSize="10" FontWeight="Bold" VerticalAlignment="Center"/>
+            <Ellipse x:Name="StatusDot" Width="6" Height="6" Fill="#A855F7" Margin="0,0,5,0" VerticalAlignment="Center"/>
+            <TextBlock x:Name="StatusText" Text="同步中" Foreground="#DDD6FE" FontSize="10.5" FontWeight="SemiBold" VerticalAlignment="Center"/>
           </StackPanel>
         </Border>
       </DockPanel>
-      <TextBlock x:Name="Heading" Text="即将自动同步" Foreground="#FFFFFF" FontSize="16" FontWeight="SemiBold" Margin="0,10,0,6"/>
-      <TextBlock x:Name="Body" TextWrapping="Wrap" TextTrimming="CharacterEllipsis" MaxHeight="63" Foreground="#DDD9E5" FontSize="12.8" LineHeight="19"/>
-      <TextBlock x:Name="Hint" TextWrapping="Wrap" Foreground="#9D98AA" FontSize="11.8" Margin="0,8,0,0"/>
+      <TextBlock x:Name="Heading" Text="准备同步" Foreground="#FFFFFF" FontSize="16" FontWeight="SemiBold" Margin="0,11,0,6"/>
+      <TextBlock x:Name="Body" TextWrapping="Wrap" TextTrimming="CharacterEllipsis" MaxHeight="63" Foreground="#E2E0EB" FontSize="12.8" LineHeight="19"/>
+      <TextBlock x:Name="Hint" TextWrapping="Wrap" Foreground="#A6A0B8" FontSize="11.8" Margin="0,7,0,0"/>
       <ScrollViewer x:Name="DetailsBox" Visibility="Collapsed" MaxHeight="110" VerticalScrollBarVisibility="Auto" Margin="0,10,0,0">
-        <Border Background="#101017" BorderBrush="#2F2D40" BorderThickness="1" CornerRadius="7" Padding="10,8">
-          <TextBlock x:Name="DetailsText" TextWrapping="Wrap" Foreground="#DDD9E5" FontSize="11.5" LineHeight="18"/>
+        <Border Background="#0E0D15" BorderBrush="#2A263A" BorderThickness="1" CornerRadius="8" Padding="10,9">
+          <TextBlock x:Name="DetailsText" TextWrapping="Wrap" Foreground="#DDD9E8" FontSize="11.5" LineHeight="18"/>
         </Border>
       </ScrollViewer>
       <WrapPanel Margin="0,14,0,0">
         <WrapPanel.Resources>
           <Style TargetType="Button">
-            <Setter Property="Height" Value="29"/>
-            <Setter Property="Padding" Value="13,0"/>
+            <Setter Property="Height" Value="30"/>
+            <Setter Property="Padding" Value="14,0"/>
             <Setter Property="Margin" Value="0,0,8,6"/>
             <Setter Property="FontSize" Value="12"/>
             <Setter Property="FontWeight" Value="Medium"/>
             <Setter Property="Cursor" Value="Hand"/>
-            <Setter Property="Background" Value="#252533"/>
+            <Setter Property="Background" Value="#222130"/>
             <Setter Property="Foreground" Value="#E2E2EA"/>
-            <Setter Property="BorderBrush" Value="#3D3B50"/>
+            <Setter Property="BorderBrush" Value="#38344E"/>
             <Setter Property="BorderThickness" Value="1"/>
             <Setter Property="Template">
               <Setter.Value>
                 <ControlTemplate TargetType="Button">
-                  <Border x:Name="btnBorder" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="7">
+                  <Border x:Name="btnBorder" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="8">
                     <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" Margin="{TemplateBinding Padding}"/>
                   </Border>
+                  <ControlTemplate.Triggers>
+                    <Trigger Property="IsMouseOver" Value="True">
+                      <Setter TargetName="btnBorder" Property="Background" Value="#2D2B3D"/>
+                      <Setter TargetName="btnBorder" Property="BorderBrush" Value="#4C4769"/>
+                    </Trigger>
+                    <Trigger Property="IsPressed" Value="True">
+                      <Setter TargetName="btnBorder" Property="Background" Value="#1A1926"/>
+                    </Trigger>
+                    <Trigger Property="IsEnabled" Value="False">
+                      <Setter TargetName="btnBorder" Property="Opacity" Value="0.55"/>
+                    </Trigger>
+                  </ControlTemplate.Triggers>
+                </ControlTemplate>
+              </Setter.Value>
+            </Setter>
+          </Style>
+          <Style x:Key="PrimaryBtn" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+            <Setter Property="Background" Value="#7C3AED"/>
+            <Setter Property="Foreground" Value="#FFFFFF"/>
+            <Setter Property="BorderBrush" Value="#8B5CF6"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Template">
+              <Setter.Value>
+                <ControlTemplate TargetType="Button">
+                  <Border x:Name="btnBorder" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="8">
+                    <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" Margin="{TemplateBinding Padding}"/>
+                  </Border>
+                  <ControlTemplate.Triggers>
+                    <Trigger Property="IsMouseOver" Value="True">
+                      <Setter TargetName="btnBorder" Property="Background" Value="#8B5CF6"/>
+                      <Setter TargetName="btnBorder" Property="BorderBrush" Value="#A78BFA"/>
+                    </Trigger>
+                    <Trigger Property="IsPressed" Value="True">
+                      <Setter TargetName="btnBorder" Property="Background" Value="#6D28D9"/>
+                    </Trigger>
+                    <Trigger Property="IsEnabled" Value="False">
+                      <Setter TargetName="btnBorder" Property="Opacity" Value="0.55"/>
+                    </Trigger>
+                  </ControlTemplate.Triggers>
+                </ControlTemplate>
+              </Setter.Value>
+            </Setter>
+          </Style>
+          <Style x:Key="DangerBtn" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+            <Setter Property="Background" Value="#291621"/>
+            <Setter Property="Foreground" Value="#FDA4AF"/>
+            <Setter Property="BorderBrush" Value="#542434"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Template">
+              <Setter.Value>
+                <ControlTemplate TargetType="Button">
+                  <Border x:Name="btnBorder" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="8">
+                    <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" Margin="{TemplateBinding Padding}"/>
+                  </Border>
+                  <ControlTemplate.Triggers>
+                    <Trigger Property="IsMouseOver" Value="True">
+                      <Setter TargetName="btnBorder" Property="Background" Value="#381B2C"/>
+                      <Setter TargetName="btnBorder" Property="BorderBrush" Value="#732B44"/>
+                      <Setter Property="Foreground" Value="#FECDD3"/>
+                    </Trigger>
+                    <Trigger Property="IsPressed" Value="True">
+                      <Setter TargetName="btnBorder" Property="Background" Value="#201019"/>
+                    </Trigger>
+                    <Trigger Property="IsEnabled" Value="False">
+                      <Setter TargetName="btnBorder" Property="Background" Value="#1C151B"/>
+                      <Setter TargetName="btnBorder" Property="BorderBrush" Value="#2E232B"/>
+                      <Setter Property="Foreground" Value="#786B74"/>
+                      <Setter TargetName="btnBorder" Property="Opacity" Value="0.6"/>
+                    </Trigger>
+                  </ControlTemplate.Triggers>
                 </ControlTemplate>
               </Setter.Value>
             </Setter>
           </Style>
         </WrapPanel.Resources>
-        <Button x:Name="Start" Content="立即开始" Background="#9333EA" Foreground="#FFFFFF" BorderThickness="0"/>
-        <Button x:Name="Later" Content="5 分钟后"/>
+        <Button x:Name="Start" Content="立即开始" Style="{StaticResource PrimaryBtn}"/>
+        <Button x:Name="Later" Content="稍后同步"/>
         <Button x:Name="Cancel" Content="取消"/>
-        <Button x:Name="Stop" Content="停止" Visibility="Collapsed" Background="#3E1A22" Foreground="#FFA3AD" BorderBrush="#6E2835"/>
-        <Button x:Name="Details" Content="查看记录" Visibility="Collapsed"/>
-        <Button x:Name="Dismiss" Content="关闭" Visibility="Collapsed" Background="#9333EA" Foreground="#FFFFFF" BorderThickness="0"/>
+        <Button x:Name="Stop" Content="停止" Visibility="Collapsed" Style="{StaticResource DangerBtn}"/>
+        <Button x:Name="Details" Content="查看原因" Visibility="Collapsed"/>
+        <Button x:Name="Dismiss" Content="关闭" Visibility="Collapsed" Style="{StaticResource PrimaryBtn}"/>
       </WrapPanel>
     </StackPanel>
   </Border>
@@ -99,12 +170,21 @@ if ($SmokeTest) {
 '@
 $window = [Windows.Markup.XamlReader]::Load((New-Object Xml.XmlNodeReader $layout))
 $controls = @{}
-foreach ($name in @('Heading','Body','Hint','Start','Later','Cancel','Stop','Details','Dismiss','DetailsBox','DetailsText')) { $controls[$name] = $window.FindName($name) }
+foreach ($name in @('Heading','Body','Hint','Start','Later','Cancel','Stop','Details','Dismiss','DetailsBox','DetailsText','StatusBadge','StatusDot','StatusText')) { $controls[$name] = $window.FindName($name) }
 $script:phase = ''
 $script:decided = $false
 $script:deadline = [DateTime]::UtcNow.AddSeconds(5)
 $script:closeAt = [DateTime]::MaxValue
 $script:lastState = ''
+
+$brushConverter = New-Object Windows.Media.BrushConverter
+function Set-StatusBadge([string]$Text, [string]$DotColor, [string]$BgColor, [string]$BorderColor, [string]$TextColor) {
+    $controls.StatusText.Text = $Text
+    $controls.StatusDot.Fill = $brushConverter.ConvertFromString($DotColor)
+    $controls.StatusBadge.Background = $brushConverter.ConvertFromString($BgColor)
+    $controls.StatusBadge.BorderBrush = $brushConverter.ConvertFromString($BorderColor)
+    $controls.StatusText.Foreground = $brushConverter.ConvertFromString($TextColor)
+}
 
 function Send-CardCommand([string]$Command) { [Console]::WriteLine($Command); [Console]::Out.Flush() }
 function Set-CardState([string]$Phase, [string]$Text) {
@@ -120,31 +200,42 @@ function Set-CardState([string]$Phase, [string]$Text) {
     $controls.Hint.Text = ''
     switch ($Phase) {
         'before' {
-            $controls.Heading.Text = '即将自动同步'
-            $controls.Hint.Text = '5 秒后开始'
+            $controls.Heading.Text = '准备同步'
+            $controls.Hint.Text = '5 秒后自动开始'
+            Set-StatusBadge '准备中' '#A78BFA' '#221F35' '#3F3A5C' '#C4B5FD'
             foreach ($name in @('Start','Later','Cancel')) { $controls[$name].Visibility = 'Visible' }
         }
         'running' {
             $controls.Heading.Text = '正在同步'
-            $controls.Hint.Text = '正在操作 IMA，可随时停止。'
+            $controls.Hint.Text = '后台自动整理中，随时可停。'
+            Set-StatusBadge '同步中' '#A855F7' '#251B38' '#452E6B' '#DDD6FE'
             $controls.Stop.Visibility = 'Visible'
             $controls.Stop.IsEnabled = $true
         }
         'stopping' {
-            $controls.Heading.Text = '正在停止…'
+            $controls.Heading.Text = '正在停止'
+            Set-StatusBadge '停止中' '#FB7185' '#2D1C24' '#562B37' '#FDA4AF'
             $controls.Stop.Visibility = 'Visible'
             $controls.Stop.IsEnabled = $false
         }
         { $_ -in @('success','canceled','failed') } {
-            $controls.Heading.Text = switch ($Phase) { 'canceled' { '同步已停止' } 'failed' { '同步有异常' } default { '同步完成' } }
+            $controls.Heading.Text = switch ($Phase) { 'canceled' { '已经停止' } 'failed' { '遇到问题' } default { '同步完成' } }
             $controls.Dismiss.Visibility = 'Visible'
             if ($Phase -eq 'failed') {
-                $controls.Heading.Foreground = [Windows.Media.Brushes]::Gold
+                $controls.Heading.Foreground = $brushConverter.ConvertFromString('#FBBF24')
+                Set-StatusBadge '需关注' '#FBBF24' '#2E2214' '#5C401D' '#FDE68A'
                 $controls.Details.Visibility = 'Visible'
                 $controls.Details.Content = '查看原因'
-            } else {
+                $script:closeAt = [DateTime]::UtcNow.AddSeconds(8)
+                $controls.Hint.Text = '8 秒后自动关闭'
+            } elseif ($Phase -eq 'canceled') {
+                Set-StatusBadge '已停止' '#9CA3AF' '#22212E' '#3B394D' '#D1D5DB'
                 $script:closeAt = [DateTime]::UtcNow.AddSeconds(5)
-                $controls.Hint.Text = '5 秒后关闭'
+                $controls.Hint.Text = '5 秒后自动关闭'
+            } else {
+                Set-StatusBadge '已完成' '#34D399' '#132822' '#225243' '#A7F3D0'
+                $script:closeAt = [DateTime]::UtcNow.AddSeconds(5)
+                $controls.Hint.Text = '5 秒后自动关闭'
             }
         }
         'close' { $window.Close() }
@@ -160,7 +251,7 @@ function Start-CardOperation {
 $controls.Start.Add_Click({ Start-CardOperation })
 $controls.Later.Add_Click({ if (-not $script:decided) { $script:decided = $true; Send-CardCommand 'later'; $window.Close() } })
 $controls.Cancel.Add_Click({ if (-not $script:decided) { $script:decided = $true; Send-CardCommand 'cancel'; $window.Close() } })
-$controls.Stop.Add_Click({ Set-CardState 'stopping' '已保存内容会保留。'; Send-CardCommand 'stop' })
+$controls.Stop.Add_Click({ Set-CardState 'stopping' '已存内容不会丢，正在收尾。'; Send-CardCommand 'stop' })
 $controls.Details.Add_Click({
     # Show this run's details here; Obsidian may be minimized or behind another app.
     $script:closeAt = [DateTime]::MaxValue
@@ -172,7 +263,7 @@ $controls.Dismiss.Add_Click({ $window.Close() })
 $window.Add_Closing({ param($sender, $eventArgs)
     if ($script:phase -in @('running','stopping')) {
         $eventArgs.Cancel = $true
-        if ($script:phase -ne 'stopping') { Set-CardState 'stopping' '正在结束本次同步…'; Send-CardCommand 'stop' }
+        if ($script:phase -ne 'stopping') { Set-CardState 'stopping' '已存内容不会丢，正在收尾。'; Send-CardCommand 'stop' }
     }
 })
 
@@ -197,7 +288,7 @@ $timer.Add_Tick({
     Read-CardState
     if ($script:phase -eq 'before' -and -not $script:decided) {
         $seconds = [Math]::Max(0, [Math]::Ceiling(($script:deadline - [DateTime]::UtcNow).TotalSeconds))
-        $controls.Hint.Text = "$seconds 秒后开始"
+        $controls.Hint.Text = "$seconds 秒后自动开始"
         if ($seconds -le 0) { Start-CardOperation }
     }
     if ([DateTime]::UtcNow -ge $script:closeAt) { $window.Close() }
@@ -225,9 +316,9 @@ if ($PreviewPath) {
     # Render the actual WPF control tree off-screen; never launch IMA or move focus.
     foreach ($previewPhase in @('before','running','stopping','success','failed','failed-details')) {
         $previewText = switch ($previewPhase) {
-            'before' { '将操作 IMA，保存分享文章。' }
+            'before' { '马上整理分享文章，存入本地笔记。' }
             'running' { '正在检查第 3 / 7 篇文章：全球八大投行每日速看' }
-            'stopping' { '已保存内容会保留。' }
+            'stopping' { '已存内容不会丢，正在收尾。' }
             'success' { '新增 1 篇 · 跳过 6 篇' }
             'failed' { '跳过 6 篇 · 失败 1 篇' }
             'failed-details' { '跳过 6 篇 · 失败 1 篇' }

@@ -29,7 +29,7 @@ export class DesktopOperationCard {
     try {
       const scriptPath = path.join(this.directory, "card.ps1");
       await writeFile(scriptPath, `\uFEFF${cardScript}`, "utf8");
-      await this.update({ phase: showBefore ? "before" : "running", text: showBefore ? "将操作 IMA，保存分享文章。" : "正在准备同步…" });
+      await this.update({ phase: showBefore ? "before" : "running", text: showBefore ? "马上整理分享文章，存入本地笔记。" : "正在准备同步…" });
       if (this.disposed) throw new Error("桌面操作提示已取消。");
       await new Promise<void>((resolve, reject) => {
         let ready = false;

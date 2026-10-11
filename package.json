@@ -1,6 +1,6 @@
 {
   "name": "ima-share-sync",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Windows Obsidian plugin for syncing IMA articles and permitted original files, with local PDF-to-Markdown conversion.",
   "private": true,
   "license": "MIT",
@@ -9,7 +9,7 @@
     "dev": "node esbuild.config.mjs watch",
     "lint": "eslint src/**/*.ts",
     "typecheck": "tsc --noEmit",
-    "test:js": "node tests/test-main.cjs",
+    "test:js": "node tests/test-main.cjs && node tests/test-dashboard-stats.cjs",
     "test:pdf": "node tests/test-pdf-validation.mjs",
     "test:ps": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/test-sync.ps1 && powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/test-general.ps1 && powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/test-general-folders.ps1 && powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/test-list-readiness.ps1 && powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/test-original-file-safety.ps1",
     "test:card": "node tests/test-operation-card.cjs",

@@ -178,6 +178,7 @@ class Plugin {
     this.manifest = { ...JSON.parse(fs.readFileSync(nodePath.join(__dirname, "../manifest.json"), "utf8")), dir: ".obsidian/plugins/ima-speed-sync" };
     this.app = {
       vault: {
+        getFiles: () => [...files.values()].filter(file => file instanceof TFile),
         adapter: new FileSystemAdapter(),
         configDir: ".obsidian",
         getAbstractFileByPath: (path) => files.get(path) || null,
@@ -1078,21 +1079,61 @@ Module._load = function (request, parent, isMain) {
   const tabHeader = findElements(generalTab.containerEl, (el) => el.cls === "ima-settings-tabs-header")[0];
   assert.ok(tabHeader, "settings tab header rendered");
   const tabButtons = findElements(tabHeader, (el) => el.tag === "button");
-  assert.strictEqual(tabButtons.length, 4, "four tab buttons rendered");
-  assert.strictEqual(tabButtons[0].dataset.tabId, "scope");
-  assert.strictEqual(tabButtons[1].dataset.tabId, "markdown");
-  assert.strictEqual(tabButtons[2].dataset.tabId, "notifications");
-  assert.strictEqual(tabButtons[3].dataset.tabId, "general");
-  assert.ok(tabButtons[0].cls.includes("is-active"), "scope tab active by default");
+  assert.strictEqual(tabButtons.length, 5, "five tab buttons rendered");
+  assert.strictEqual(tabButtons[0].dataset.tabId, "stats");
+  assert.strictEqual(tabButtons[1].dataset.tabId, "scope");
+  assert.strictEqual(tabButtons[2].dataset.tabId, "markdown");
+  assert.strictEqual(tabButtons[3].dataset.tabId, "notifications");
+  assert.strictEqual(tabButtons[4].dataset.tabId, "general");
+  assert.ok(tabButtons[0].cls.includes("is-active"), "stats tab active by default");
+  const panelStats = findElements(generalTab.containerEl, (el) => el.dataset.tabContent === "stats")[0];
   const panelScope = findElements(generalTab.containerEl, (el) => el.dataset.tabContent === "scope")[0];
   const panelMarkdown = findElements(generalTab.containerEl, (el) => el.dataset.tabContent === "markdown")[0];
-  assert.ok(!panelScope.cls.includes("is-hidden"), "scope panel visible");
+  assert.ok(!panelStats.cls.includes("is-hidden"), "stats panel visible by default");
+  assert.ok(panelScope.cls.includes("is-hidden"), "scope panel hidden by default");
   assert.ok(panelMarkdown.cls.includes("is-hidden"), "markdown panel hidden");
-  await tabButtons[1].click();
-  assert.ok(tabButtons[1].cls.includes("is-active"), "markdown tab activated on click");
+
+  // 验证看板关键模块已渲染
+  assert.ok(findElements(panelStats, (el) => el.cls === "ima-dashboard-container").length > 0, "dashboard container rendered");
+  assert.ok(findElements(panelStats, (el) => el.cls === "ima-kpi-strip").length > 0, "kpi strip rendered");
+  assert.ok(findElements(panelStats, (el) => el.cls === "ima-val-grid").length > 0, "value roi grid rendered");
+  assert.ok(findElements(panelStats, (el) => el.cls === "ima-heat-grid").length > 0, "heatmap grid rendered");
+
+  // Returning from scope edits refreshes onboarding/profile; notifications remain configurable.
+  const dashboardSettings = { ...generalPlugin.settings };
+  generalPlugin.settings.knowledgeBaseName = "";
+  generalPlugin.settings.folderName = "";
+  generalTab.switchTab("stats");
+  assert.ok(findElements(panelStats, el => el.cls.includes("ima-empty-unconfigured")).length);
+  generalTab.switchTab("scope");
+  generalPlugin.settings.knowledgeBaseName = "Updated knowledge base";
+  generalPlugin.settings.folderName = "New folder";
+  generalTab.switchTab("stats");
+  assert.equal(findElements(panelStats, el => el.cls.includes("ima-empty-unconfigured")).length, 0);
+  assert.ok(findElements(panelStats, el => el.text === "Updated knowledge base").length);
+  const originalSync = generalPlugin.sync;
+  generalPlugin.settings.notificationsEnabled = false;
+  generalPlugin.sync = async () => {};
+  const noticeCount = notices.length;
+  await findElements(panelStats, el => el.cls.includes("ima-pill-sync"))[0].click();
+  assert.equal(notices.length, noticeCount, "dashboard start adds no unconfigured toast");
+  generalPlugin.settings.language = "en";
+  generalTab.refreshDashboard();
+  assert.ok(!findElements(panelStats, el => /[\u4e00-\u9fff]/.test(el.text)).length, "English dashboard contains no hard-coded Chinese");
+  const previousRuns = generalPlugin.syncReports;
+  generalPlugin.syncReports = [{finishedAt:Date.now(),interactive:true,status:"success",summary:"test",errors:[],destination:generalPlugin.getEffectiveDestinationPath(),metrics:{checked:7,saved:2}}];
+  generalPlugin.refreshView();
+  assert.equal(findElements(panelStats, el => el.cls === "ima-kpi-val")[0].text, "7", "sync state refreshes an open dashboard");
+  generalPlugin.syncReports = previousRuns;
+  generalPlugin.sync = originalSync;
+  Object.assign(generalPlugin.settings, dashboardSettings);
+  generalTab.refreshDashboard();
+
+  await tabButtons[2].click();
+  assert.ok(tabButtons[2].cls.includes("is-active"), "markdown tab activated on click");
   assert.ok(!panelMarkdown.cls.includes("is-hidden"), "markdown panel visible after switch");
-  assert.ok(panelScope.cls.includes("is-hidden"), "scope panel hidden after switch");
-  await tabButtons[0].click();
+  assert.ok(panelStats.cls.includes("is-hidden"), "stats panel hidden after switch");
+  await tabButtons[1].click();
   assert.strictEqual(settingRow(generalTab, "每次检查数量").containerEl, panelScope);
   for (const name of ["数量规则", "目录上限", "扫描深度", "排序规则", "标题筛选"]) {
     assert.strictEqual(settingRow(generalTab, name).containerEl.parentElement, advancedPanel(generalTab), `${name} belongs inside advanced settings`);

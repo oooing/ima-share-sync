@@ -93,6 +93,9 @@ Check $true (Test-ImaForegroundAllowed $true 100 3000) 'explicit idle foreground
 Check $false ([bool]($source -match '\[ImaSpeedSync\.NativeMethods\]::(?:SetCursorPos|mouse_event)\(')) 'runtime never moves the shared pointer or sends global mouse input'
 Check $true (Test-ImaGeneralBottom ([pscustomobject]@{ Scrollable=$false; ScrollPercent=-1 })) 'non-scrolling short document'
 Check $false (Test-ImaGeneralBottom ([pscustomobject]@{ Scrollable=$true; ScrollPercent=50 })) 'stalled middle is not bottom'
+foreach ($pair in @(@(70,30), @(90,10), @(0,98), @(98,20))) {
+    Check $false (Test-ImaGeneralBottom ([pscustomobject]@{Scrollable=$true;ScrollPercent=$pair[0];ViewSize=$pair[1];ContentEndVisible=$false})) 'visible percentage cannot be added to scroll offset'
+}
 Check $true (Test-ImaGeneralBottom ([pscustomobject]@{ Scrollable=$true; ScrollPercent=103.1 })) 'bounded Chromium overshoot'
 Check $false (Test-ImaGeneralBottom ([pscustomobject]@{ Scrollable=$true; ScrollPercent=[double]::NaN })) 'unknown scroll state is not bottom'
 $viewportBounds = [pscustomobject]@{Top=50;Bottom=1050;Height=1000}
