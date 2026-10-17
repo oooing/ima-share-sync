@@ -1,4 +1,4 @@
-$ErrorActionPreference = 'Stop'
+﻿$ErrorActionPreference = 'Stop'
 $ImaSpeedSyncSkipMain = $true
 $sourcePath = Join-Path (Split-Path -Parent $PSScriptRoot) 'src\sync.ps1'
 $source = [IO.File]::ReadAllText($sourcePath, [Text.Encoding]::UTF8)

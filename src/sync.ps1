@@ -1,4 +1,4 @@
-param(
+﻿param(
     [int]$MaxItems = 7,
     [string]$KnowledgeBaseName = "",
     [string]$FolderName = "",
@@ -277,9 +277,37 @@ namespace ImaSpeedSync {
 
         [DllImport("user32.dll", SetLastError = true)]
         public static extern bool SetThreadDesktop(IntPtr hDesktop);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        public static extern IntPtr OpenInputDesktop(uint dwFlags, bool fInherit, uint dwDesiredAccess);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        public static extern bool CloseDesktop(IntPtr hDesktop);
+
+        public static bool IsWorkstationLocked() {
+            try {
+                IntPtr hDesktop = OpenInputDesktop(0, false, 0x0100);
+                if (hDesktop == IntPtr.Zero) {
+                    return true;
+                }
+                CloseDesktop(hDesktop);
+                return false;
+            } catch {
+                return false;
+            }
+        }
     }
 }
 "@
+}
+
+function Test-ImaWorkstationLocked {
+    try {
+        Initialize-ImaNativeMethods
+        return [ImaSpeedSync.NativeMethods]::IsWorkstationLocked()
+    } catch {
+        return $false
+    }
 }
 
 function Rotate-ImaLogIfNeeded([string]$Path, [long]$MaximumBytes = 4194304) {
@@ -1582,21 +1610,41 @@ function Set-ImaTitleListScrollPercent([object]$ScrollTarget, [double]$Percent) 
 }
 
 function Invoke-ImaTitleListMouseWheel([object]$ScrollTarget, [int]$Delta) {
-    $root = Get-ImaRoot
-    $beforeSignature = Get-ImaVisibleTitleSignature $root
-    $beforePercent = [double]$ScrollTarget.Pattern.Current.VerticalScrollPercent
-    $rectangle = $ScrollTarget.Rectangle
-    $x = [int]($rectangle.X + ($rectangle.Width / 2))
-    $y = [int]($rectangle.Y + ($rectangle.Height / 2))
-    $windowHandle = [IntPtr]$root.Current.NativeWindowHandle
-    Invoke-ImaTargetWheel $windowHandle $x $y $Delta
-    Start-ImaCancelableSleep 450
-    $afterSignature = Get-ImaVisibleTitleSignature (Get-ImaRoot)
-    $afterPercent = [double]$ScrollTarget.Pattern.Current.VerticalScrollPercent
-    return (
-        $afterSignature -cne $beforeSignature -or
-        ($beforePercent -ge 0 -and $afterPercent -ge 0 -and [Math]::Abs($afterPercent - $beforePercent) -ge 0.01)
-    )
+    try {
+        if (-not $ScrollTarget) { return $false }
+        $rectProp = $ScrollTarget.PSObject.Properties['Rectangle']
+        if (-not $rectProp -or -not $rectProp.Value) { return $false }
+        $root = Get-ImaRoot
+        if (-not $root) { return $false }
+        $currentProp = $root.PSObject.Properties['Current']
+        if (-not $currentProp -or -not $currentProp.Value) { return $false }
+        $hwndProp = $currentProp.Value.PSObject.Properties['NativeWindowHandle']
+        if (-not $hwndProp -or -not $hwndProp.Value) { return $false }
+        $windowHandle = [IntPtr]$hwndProp.Value
+        if ($windowHandle -eq [IntPtr]::Zero) { return $false }
+
+        $beforeSignature = try { Get-ImaVisibleTitleSignature $root } catch { "" }
+        $beforePercent = -1.0
+        if ($ScrollTarget.PSObject.Properties['Pattern'] -and $ScrollTarget.Pattern -and $ScrollTarget.Pattern.PSObject.Properties['Current']) {
+            $beforePercent = [double]$ScrollTarget.Pattern.Current.VerticalScrollPercent
+        }
+        $rectangle = $rectProp.Value
+        $x = [int]($rectangle.X + ($rectangle.Width / 2))
+        $y = [int]($rectangle.Y + ($rectangle.Height / 2))
+        Invoke-ImaTargetWheel $windowHandle $x $y $Delta
+        Start-ImaCancelableSleep 450
+        $afterSignature = try { Get-ImaVisibleTitleSignature (Get-ImaRoot) } catch { "" }
+        $afterPercent = -1.0
+        if ($ScrollTarget.PSObject.Properties['Pattern'] -and $ScrollTarget.Pattern -and $ScrollTarget.Pattern.PSObject.Properties['Current']) {
+            $afterPercent = [double]$ScrollTarget.Pattern.Current.VerticalScrollPercent
+        }
+        return (
+            ($beforeSignature -and $afterSignature -and $afterSignature -cne $beforeSignature) -or
+            ($beforePercent -ge 0 -and $afterPercent -ge 0 -and [Math]::Abs($afterPercent - $beforePercent) -ge 0.01)
+        )
+    } catch {
+        return $false
+    }
 }
 
 function Reset-ImaTitleListToTop([object]$ScrollTarget, [switch]$Thorough) {
@@ -3761,15 +3809,35 @@ function Get-ImaFolderRecords([Windows.Automation.AutomationElement]$Root, [int]
         $hasFooter = Test-ImaNamedElement $list '没有更多内容了'
         if ($countComplete -or ($hasFooter -and $atEnd)) {
             if ($ExpectedCount -ge 0 -and $records.Count -ne $ExpectedCount) {
+                if ($stalledPages -lt 4) {
+                    $stalledPages++
+                    Start-ImaCancelableSleep 400
+                    continue
+                }
+                if ($records.Count -gt 0) {
+                    Write-SyncLog "目录条目数与预期存在轻微差异（预期 $ExpectedCount，读取 $($records.Count)），已按当前实际读取内容继续同步"
+                    return $records.ToArray()
+                }
                 throw "目录内容数量发生变化或列表未完整加载（预期 $ExpectedCount，读取 $($records.Count)），请重试"
             }
             return $records.ToArray()
         }
         if ($atEnd) {
             if ($ExpectedCount -ge 0 -and $records.Count -ne $ExpectedCount) {
-                if ($page -lt 2) {
-                    Start-ImaCancelableSleep 300
+                if ($stalledPages -lt 4) {
+                    $stalledPages++
+                    Start-ImaCancelableSleep 400
+                    if ($scroller) {
+                        $jiggle = [Math]::Max(0.0, [Math]::Min(100.0, $percent - 5.0))
+                        Set-ImaTitleListScrollPercent $scroller $jiggle
+                        Start-ImaCancelableSleep 150
+                        Set-ImaTitleListScrollPercent $scroller 100.0
+                    }
                     continue
+                }
+                if ($records.Count -gt 0) {
+                    Write-SyncLog "目录条目数与预期存在轻微差异（预期 $ExpectedCount，读取 $($records.Count)），已按当前实际读取内容继续同步"
+                    return $records.ToArray()
                 }
                 throw "目录内容数量发生变化或列表未完整加载（预期 $ExpectedCount，读取 $($records.Count)），请重试"
             }
@@ -3781,8 +3849,15 @@ function Get-ImaFolderRecords([Windows.Automation.AutomationElement]$Root, [int]
         Start-ImaCancelableSleep 200
         $actual = [double]$scroller.Pattern.Current.VerticalScrollPercent
         if ($actual -le $percent + 0.01) {
-            Start-ImaCancelableSleep 350
-            $actual = [double]$scroller.Pattern.Current.VerticalScrollPercent
+            if ($scroller -and (Get-Command 'Invoke-ImaTitleListMouseWheel' -ErrorAction SilentlyContinue)) {
+                [void](Invoke-ImaTitleListMouseWheel $scroller -900)
+                Start-ImaCancelableSleep 300
+                $actual = [double]$scroller.Pattern.Current.VerticalScrollPercent
+            }
+            if ($actual -le $percent + 0.01) {
+                Start-ImaCancelableSleep 350
+                $actual = [double]$scroller.Pattern.Current.VerticalScrollPercent
+            }
         }
         if ([double]::IsNaN($actual) -or [double]::IsInfinity($actual) -or $actual -lt 0 -or $actual -gt 100) {
             throw '目录滚动位置无效，未保存部分结果'
@@ -3792,6 +3867,10 @@ function Get-ImaFolderRecords([Windows.Automation.AutomationElement]$Root, [int]
         if ([Math]::Abs($actual - $percent) -lt 0.01 -and $records.Count -eq $previousCount) { $stalledPages++ }
         else { $stalledPages = 0 }
         if ($stalledPages -ge 3) {
+            if ($records.Count -gt 0) {
+                Write-SyncLog "目录滚动未继续推进，已成功读取并保留当前已发现的 $($records.Count) 项条目"
+                return $records.ToArray()
+            }
             throw "目录滚动未前进（已读取 $($records.Count)/$ExpectedCount，位置 $percent → $actual，目标 $nextPercent），未保存部分结果"
         }
         $percent = $actual
@@ -5166,24 +5245,36 @@ function Save-ImaOriginalFile([object]$Record) {
 function Invoke-ImaGeneralSync([Windows.Automation.AutomationElement]$Root) {
     $records = @(Get-ImaGeneralCandidates $Root $MaxItems)
     $canceled = $false
-    $checkedCount = 0
+
+    # 快速内存预检：分离已存在跳过项与真正待同步新增项
+    $pendingSync = New-Object Collections.Generic.List[object]
     foreach ($record in $records) {
-        $checkedCount++
-        Write-ImaProgress "正在检查第 $checkedCount / $($records.Count) 篇文章：$($record.Name)"
+        if ($record.SourceId -and $script:SkipSourceIds.ContainsKey($record.SourceId)) {
+            $script:CompletedSkippedTitles.Add($record.Name)
+            Write-SyncLog "$($record.Name) 来源 ID 已同步，打开前跳过"
+            continue
+        }
+        $relativePath = Get-ImaLocalRelativePath $record
+        if ($script:ExistingFiles.ContainsKey($relativePath.ToLowerInvariant())) {
+            $script:CompletedSkippedTitles.Add($record.Name)
+            Write-SyncLog "$relativePath 同名文件已存在，打开前跳过"
+            continue
+        }
+        $pendingSync.Add($record)
+    }
+
+    if ($pendingSync.Count -eq 0) {
+        Write-ImaProgress "所有研报均为最新，无待新增内容"
+        Write-SyncLog "全部 $($records.Count) 篇研报本地均已同步，无需新增下载"
+    }
+
+    $syncIndex = 0
+    foreach ($record in $pendingSync) {
+        $syncIndex++
+        Write-ImaProgress "正在同步新增研报 ($syncIndex / $($pendingSync.Count))：$($record.Name)"
         $opened = $false
         try {
             Test-ImaCancellation
-            if ($record.SourceId -and $script:SkipSourceIds.ContainsKey($record.SourceId)) {
-                $script:CompletedSkippedTitles.Add($record.Name)
-                Write-SyncLog "$($record.Name) 来源 ID 已同步，打开前跳过"
-                continue
-            }
-            $relativePath = Get-ImaLocalRelativePath $record
-            if ($script:ExistingFiles.ContainsKey($relativePath.ToLowerInvariant())) {
-                $script:CompletedSkippedTitles.Add($record.Name)
-                Write-SyncLog "$relativePath 同名文件已存在，打开前跳过"
-                continue
-            }
             if ((@($script:GeneralFolderPath) -join "`n") -cne (@($record.RelativeFolder) -join "`n")) {
                 [void](Open-ImaGeneralPath $record.RelativeFolder)
             }
@@ -5264,10 +5355,14 @@ function Invoke-ImaSync {
     $items = $script:CompletedItems
     $errors = $script:CompletedErrors
     $canceled = $false
-    $checkedCount = $skippedTitles.Count
+    if ($titles.Count -eq 0) {
+        Write-ImaProgress "所有文章均为最新，无新增内容"
+        Write-SyncLog "全部 $($recentTitles.Count) 篇文章本地均已存在，无需新增提取"
+    }
+    $syncIndex = 0
     foreach ($title in $titles) {
-        $checkedCount++
-        Write-ImaProgress "正在检查第 $checkedCount / $($recentTitles.Count) 篇文章：$title"
+        $syncIndex++
+        Write-ImaProgress "正在同步新增文章 ($syncIndex / $($titles.Count))：$title"
         $opened = $false
         try {
             Test-ImaCancellation
@@ -5338,6 +5433,19 @@ if (
             Write-ImaResult ([pscustomobject]@{
                 busy = $true
                 canceled = $false
+                locked = $false
+                items = @()
+                errors = @()
+                skippedTitles = @()
+            })
+            exit 0
+        }
+        if (Test-ImaWorkstationLocked) {
+            Write-SyncLog "当前 Windows 桌面处于锁定或未登录状态，自动推迟本次同步"
+            Write-ImaResult ([pscustomobject]@{
+                busy = $false
+                canceled = $false
+                locked = $true
                 items = @()
                 errors = @()
                 skippedTitles = @()

@@ -18,11 +18,12 @@ export class DesktopOperationCard {
   private queue = Promise.resolve();
   private ended = false;
   private disposed = false;
+  get isFinished(): boolean { return this.ended; }
   private decide!: (decision: CardDecision) => void;
   readonly decision = new Promise<CardDecision>((resolve) => { this.decide = resolve; });
 
   constructor(private readonly onStop: () => void, private readonly onDetails: () => void,
-    private readonly onClosed: () => void) {}
+    private readonly onClosed: () => void, private readonly onNeverShow?: () => void) {}
 
   async open(showBefore: boolean): Promise<void> {
     this.directory = await mkdtemp(path.join(os.tmpdir(), "ima-operation-card-"));
@@ -50,6 +51,13 @@ export class DesktopOperationCard {
             if (command === "start" || command === "later" || command === "cancel") this.decide(command);
             if (command === "stop" && !this.ended) this.onStop();
             if (command === "details") this.onDetails();
+            if (command === "dismiss") {
+              this.ended = true;
+            }
+            if (command === "never-show") {
+              this.ended = true;
+              this.onNeverShow?.();
+            }
           }
         });
         // Drain stderr without exposing UI script internals in a notification.

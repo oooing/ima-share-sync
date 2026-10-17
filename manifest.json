@@ -1,7 +1,7 @@
 {
   "id": "ima-speed-sync",
   "name": "IMA Share Sync",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "minAppVersion": "1.11.4",
   "description": "Sync IMA articles and permitted original files to your vault, with local PDF-to-Markdown conversion using Windows desktop automation.",
   "author": "oooin",

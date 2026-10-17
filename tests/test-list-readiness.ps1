@@ -1,4 +1,4 @@
-$ErrorActionPreference = 'Stop'
+﻿$ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName UIAutomationClient
 $ImaSpeedSyncSkipMain = $true
 . ([ScriptBlock]::Create([IO.File]::ReadAllText((Join-Path $PSScriptRoot '../src/sync.ps1'))))

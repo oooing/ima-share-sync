@@ -47,12 +47,41 @@ if ($SmokeTest) {
           </Viewbox>
           <TextBlock Text="IMA Share Sync" Foreground="#C8ACFF" FontSize="12.5" FontWeight="SemiBold" VerticalAlignment="Center"/>
         </StackPanel>
-        <Border x:Name="StatusBadge" DockPanel.Dock="Right" Background="#251B38" BorderBrush="#452E6B" BorderThickness="1" CornerRadius="999" Padding="8,2.5" VerticalAlignment="Center">
-          <StackPanel Orientation="Horizontal">
-            <Ellipse x:Name="StatusDot" Width="6" Height="6" Fill="#A855F7" Margin="0,0,5,0" VerticalAlignment="Center"/>
-            <TextBlock x:Name="StatusText" Text="同步中" Foreground="#DDD6FE" FontSize="10.5" FontWeight="SemiBold" VerticalAlignment="Center"/>
-          </StackPanel>
-        </Border>
+        <StackPanel Orientation="Horizontal" DockPanel.Dock="Right">
+          <Border x:Name="StatusBadge" Background="#251B38" BorderBrush="#452E6B" BorderThickness="1" CornerRadius="999" Padding="8,2.5" VerticalAlignment="Center">
+            <StackPanel Orientation="Horizontal">
+              <Ellipse x:Name="StatusDot" Width="6" Height="6" Fill="#A855F7" Margin="0,0,5,0" VerticalAlignment="Center"/>
+              <TextBlock x:Name="StatusText" Text="同步中" Foreground="#DDD6FE" FontSize="10.5" FontWeight="SemiBold" VerticalAlignment="Center"/>
+            </StackPanel>
+          </Border>
+          <Button x:Name="CloseCardBtn" Width="28" Height="22" Margin="8,0,0,0"
+                  Background="Transparent" BorderThickness="0" Foreground="#8E88A8"
+                  Cursor="Hand" ToolTip="关闭选项（点击可下拉选择）" VerticalAlignment="Center"
+                  Style="{x:Null}">
+            <Button.Template>
+              <ControlTemplate TargetType="Button">
+                <Border x:Name="b" Background="Transparent" CornerRadius="6" Padding="3,1">
+                  <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                    <TextBlock Text="✕" FontSize="11" VerticalAlignment="Center"/>
+                    <TextBlock Text="▾" FontSize="9" Margin="2,-1,0,0" VerticalAlignment="Center"/>
+                  </StackPanel>
+                </Border>
+                <ControlTemplate.Triggers>
+                  <Trigger Property="IsMouseOver" Value="True">
+                    <Setter TargetName="b" Property="Background" Value="#2D293E"/>
+                    <Setter Property="Foreground" Value="#FFFFFF"/>
+                  </Trigger>
+                </ControlTemplate.Triggers>
+              </ControlTemplate>
+            </Button.Template>
+            <Button.ContextMenu>
+              <ContextMenu x:Name="CloseMenu" Background="#1B1926" BorderBrush="#3D3754" BorderThickness="1" Foreground="#E0DCED">
+                <MenuItem x:Name="MenuDismissOnce" Header="关闭本次提示" FontSize="12" Foreground="#E0DCED"/>
+                <MenuItem x:Name="MenuNeverShow" Header="下次不再提示 (永久关闭)" FontSize="12" Foreground="#FDA4AF"/>
+              </ContextMenu>
+            </Button.ContextMenu>
+          </Button>
+        </StackPanel>
       </DockPanel>
       <TextBlock x:Name="Heading" Text="准备同步" Foreground="#FFFFFF" FontSize="16" FontWeight="SemiBold" Margin="0,11,0,6"/>
       <TextBlock x:Name="Body" TextWrapping="Wrap" TextTrimming="CharacterEllipsis" MaxHeight="63" Foreground="#E2E0EB" FontSize="12.8" LineHeight="19"/>
@@ -170,9 +199,10 @@ if ($SmokeTest) {
 '@
 $window = [Windows.Markup.XamlReader]::Load((New-Object Xml.XmlNodeReader $layout))
 $controls = @{}
-foreach ($name in @('Heading','Body','Hint','Start','Later','Cancel','Stop','Details','Dismiss','DetailsBox','DetailsText','StatusBadge','StatusDot','StatusText')) { $controls[$name] = $window.FindName($name) }
+foreach ($name in @('Heading','Body','Hint','Start','Later','Cancel','Stop','Details','Dismiss','DetailsBox','DetailsText','StatusBadge','StatusDot','StatusText','CloseCardBtn','MenuDismissOnce','MenuNeverShow')) { $controls[$name] = $window.FindName($name) }
 $script:phase = ''
 $script:decided = $false
+$script:userDismissed = $false
 $script:deadline = [DateTime]::UtcNow.AddSeconds(5)
 $script:closeAt = [DateTime]::MaxValue
 $script:lastState = ''
@@ -260,7 +290,44 @@ $controls.Details.Add_Click({
     if ($controls.DetailsBox.Visibility -eq 'Visible') { Send-CardCommand 'details' }
 })
 $controls.Dismiss.Add_Click({ $window.Close() })
+if ($controls.CloseCardBtn) {
+    $controls.CloseCardBtn.Add_Click({
+        $menu = $controls.CloseCardBtn.ContextMenu
+        if ($menu) {
+            $menu.PlacementTarget = $controls.CloseCardBtn
+            $menu.Placement = [Windows.Controls.Primitives.PlacementMode]::Bottom
+            $menu.IsOpen = $true
+        }
+    })
+}
+if ($controls.MenuDismissOnce) {
+    $controls.MenuDismissOnce.Add_Click({
+        if (-not $script:decided -and $script:phase -eq 'before') {
+            $script:decided = $true
+            Send-CardCommand 'cancel'
+            $window.Close()
+            return
+        }
+        $script:userDismissed = $true
+        Send-CardCommand 'dismiss'
+        $window.Close()
+    })
+}
+if ($controls.MenuNeverShow) {
+    $controls.MenuNeverShow.Add_Click({
+        if (-not $script:decided -and $script:phase -eq 'before') {
+            $script:decided = $true
+            Send-CardCommand 'cancel'
+        }
+        $script:userDismissed = $true
+        Send-CardCommand 'never-show'
+        $window.Close()
+    })
+}
 $window.Add_Closing({ param($sender, $eventArgs)
+    if ($script:userDismissed) {
+        return
+    }
     if ($script:phase -in @('running','stopping')) {
         $eventArgs.Cancel = $true
         if ($script:phase -ne 'stopping') { Set-CardState 'stopping' '已存内容不会丢，正在收尾。'; Send-CardCommand 'stop' }

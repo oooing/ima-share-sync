@@ -42,6 +42,20 @@ function canUseWorkerThreads(): boolean {
   return typeof Worker === "function";
 }
 
+function yieldEventLoop(): Promise<void> {
+  if (typeof setImmediate === "function") {
+    return new Promise((resolve) => setImmediate(resolve));
+  }
+  if (typeof MessageChannel !== "undefined") {
+    return new Promise((resolve) => {
+      const channel = new MessageChannel();
+      channel.port1.onmessage = () => resolve();
+      channel.port2.postMessage(null);
+    });
+  }
+  return new Promise((resolve) => scheduleParserTimeout(resolve, 0));
+}
+
 /**
  * 直接在当前进程异步分片处理转换任务。
  * 每篇处理后出让事件循环，保证 UI 丝滑响应用户取消和进度显示。
@@ -78,7 +92,7 @@ export async function runDirectConversion(
     }
 
     onProgress?.(index + 1, tasks.length);
-    await new Promise((resolve) => scheduleParserTimeout(resolve, 0));
+    await yieldEventLoop();
   }
 
   return { completed, skipped, failed };

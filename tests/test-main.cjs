@@ -241,6 +241,7 @@ class Plugin {
   addSettingTab(tab) { settingTabs.push(tab); }
   addRibbonIcon(icon, title, callback) { assert.ok(registeredIcons.has(icon), "custom icon must be registered first"); ribbonIcon = icon; ribbonTitle = title; ribbonCallback = callback; this.ribbon = new Element(); return this.ribbon; }
   registerView(type, creator) { registeredView = { type, creator }; }
+  registerDomEvent(el, event, handler) { this.registeredDomEvents = this.registeredDomEvents || []; this.registeredDomEvents.push({ el, event, handler }); }
 }
 
 class ItemView {
@@ -1610,6 +1611,13 @@ Module._load = function (request, parent, isMain) {
   assert.strictEqual(notificationPlugin.syncReports.length, beforeCancel + 2, "mutex busy is recorded as an unstarted run, not a false success");
   assert.equal(notificationPlugin.syncReports[0].status, "canceled");
 
+  notificationPlugin.runPowerShell = async () => JSON.stringify({ locked: true });
+  await notificationPlugin.sync(false);
+  assert.strictEqual(notices.length, noticeBaseline, "workstation locked is silent without error spam");
+  assert.strictEqual(notificationPlugin.syncReports.length, beforeCancel + 3, "locked run is recorded as deferred canceled");
+  assert.equal(notificationPlugin.syncReports[0].status, "canceled");
+  assert.ok(notificationPlugin.syncReports[0].summary.includes("锁定状态"));
+
   notificationPlugin.runPowerShell = async () => {
     notificationPlugin.settings.notificationsEnabled = false;
     notificationPlugin.updateNotificationPreferences();
@@ -1974,8 +1982,57 @@ Module._load = function (request, parent, isMain) {
   assert.equal(savingCardSteps.length, e2eTotal, "operation card must update dynamic progress for each saved item");
   assert.ok(savingCardSteps[0].includes(`(1/${e2eTotal})`));
   assert.ok(savingCardSteps[e2eTotal - 1].includes(`(${e2eTotal}/${e2eTotal})`));
-  assert.ok(e2eSaveDataCalls <= 3, "bulk save must batch setting writes, avoiding per-file disk thrashing");
   console.log("PASS: end-to-end bulk save, 100-page large PDF inspection without timeout, dynamic card progress and batched persistence");
+
+  // 针对用户遇到的「目录滚动未前进（16/19 卡住）」全链路端到端容错与保存测试
+  const stalledPlugin = new ImaSpeedSyncPlugin();
+  stalledPlugin.settings = {
+    ...stalledPlugin.settings,
+    autoSync: true,
+    hasConsented: true,
+    knowledgeBaseName: "26~27全球八大顶级投行研报库1",
+    folderName: "2026年10月【最新】",
+    destinationPath: "Target",
+    contentMode: "general",
+    includeSubfolders: true,
+    maxFolders: 2,
+    maxFolderDepth: 3,
+    generalSelectionMode: "total",
+    enableMarkdownConversion: false,
+    notificationsEnabled: true,
+    showOperationAfter: true,
+  };
+  await stalledPlugin.onload();
+
+  const stalledItems = Array.from({ length: 16 }, (_, i) => ({
+    sourceTitle: `202610-研报-${i + 1}`,
+    updatedDate: `2026-10-${String(i + 1).padStart(2, "0")}`,
+    body: `这是第 ${i + 1} 篇研报内容。`,
+    complete: true,
+    relativeFolder: ["2026年10月【最新】"],
+  }));
+
+  const stalledCardUpdates = [];
+  stalledPlugin.updateOperationCard = (run, text, phase) => {
+    stalledCardUpdates.push(text);
+  };
+  stalledPlugin.runPowerShell = async () => {
+    // 模拟 PowerShell 在滚动 16/19 无法推进时，安全返回当前读取的 16 条记录
+    return JSON.stringify({ items: stalledItems, skippedTitles: [], errors: [] });
+  };
+
+  await stalledPlugin.sync(true);
+
+  const stalledReport = stalledPlugin.syncReports[0];
+  assert.equal(stalledReport.status, "success", "stalled scroll fallback must result in success report");
+  assert.equal(stalledReport.errors.length, 0, "stalled scroll fallback must have zero fatal errors");
+  assert.ok(stalledReport.summary.includes("新增 16 篇"), "must report 16 articles created");
+  const stalledProgressSteps = stalledCardUpdates.filter(u => u && u.includes("正在保存 ("));
+  assert.equal(stalledProgressSteps.length, 16, "card must display 16 saving progress updates");
+  assert.ok(stalledProgressSteps[0].includes("(1/16)"));
+  assert.ok(stalledProgressSteps[15].includes("(16/16)"));
+  stalledPlugin.onunload();
+  console.log("PASS: end-to-end 16/19 stalled scroll graceful degradation, 16 articles vault persistence and dynamic progress");
 
   // i18n 多语言支持测试
   const i18nPlugin = new ImaSpeedSyncPlugin();

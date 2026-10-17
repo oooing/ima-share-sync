@@ -141,6 +141,7 @@ interface ExtractionError {
 interface ExtractionResult {
   busy?: boolean;
   canceled?: boolean;
+  locked?: boolean;
   items?: ExtractedArticle[];
   errors?: ExtractionError[];
   skippedTitles?: string[];
@@ -1835,9 +1836,29 @@ export default class ImaSpeedSyncPlugin extends Plugin {
     if (Platform.isWin) {
       this.app.workspace.onLayoutReady(() => {
         if (this.settings.autoSync && this.settings.hasConsented) {
-          void this.sync(false);
+          window.setTimeout(() => {
+            if (!this.unloaded && this.settings.autoSync && this.settings.hasConsented) {
+              void this.sync(false);
+            }
+          }, 10000);
         }
       });
+
+      if (typeof this.registerDomEvent === "function") {
+        this.registerDomEvent(window, "focus", () => {
+          if (
+            this.deferredSyncTimer !== null &&
+            !this.running &&
+            !this.unloaded &&
+            this.settings.autoSync &&
+            this.settings.hasConsented
+          ) {
+            window.clearTimeout(this.deferredSyncTimer);
+            this.deferredSyncTimer = null;
+            void this.sync(false);
+          }
+        });
+      }
     }
   }
 
@@ -2013,11 +2034,25 @@ export default class ImaSpeedSyncPlugin extends Plugin {
   }
 
   private async openOperationCard(run: SyncRun, interactive: boolean): Promise<DesktopOperationCard | null> {
-    const card = new DesktopOperationCard(() => {
-      if (this.activeRun === run && !run.report) void this.cancelSync().catch((error) => console.error("停止同步失败", error));
-    }, () => {
-      if (run.report) void this.markSyncReportsRead([run.report]);
-    }, () => this.operationCards.delete(card));
+    const card = new DesktopOperationCard(
+      () => {
+        if (this.activeRun === run && !run.report) void this.cancelSync().catch((error) => console.error("停止同步失败", error));
+      },
+      () => {
+        if (run.report) void this.markSyncReportsRead([run.report]);
+      },
+      () => this.operationCards.delete(card),
+      () => {
+        void (async () => {
+          this.settings.showOperationBefore = false;
+          this.settings.showOperationAfter = false;
+          await this.saveSettings();
+          if (this.canNotify(false, true)) {
+            this.notifyManual("已开启全静默模式：桌面不再弹出卡片，后台自动同步。", 4000);
+          }
+        })().catch((error) => console.error("保存静默设置失败", error));
+      },
+    );
     this.operationCards.add(card);
     run.card = card;
     try {
@@ -2310,6 +2345,20 @@ export default class ImaSpeedSyncPlugin extends Plugin {
         if (interactive) this.notifyManual("另一个窗口正在运行 IMA Share Sync。");
         return;
       }
+      if (result.locked) {
+        await this.recordSyncReport({
+          finishedAt: Date.now(),
+          interactive,
+          status: "canceled",
+          summary: "已推迟：Windows 桌面当前处于锁定状态，等待解锁后同步。",
+          errors: [],
+        }, false);
+        if (!interactive && !this.unloaded && this.settings.autoSync) {
+          this.scheduleDeferredSync(false, maxItems);
+        }
+        if (interactive) this.notifyManual("当前 Windows 桌面处于锁定状态，请解锁后重试。");
+        return;
+      }
       this.updateOperationCard(run, "正在保存文章…");
       const extractionCanceled = result.canceled === true;
       if (!extractionCanceled) this.assertRunActive(run);
@@ -2374,7 +2423,21 @@ export default class ImaSpeedSyncPlugin extends Plugin {
       }
 
       if (!extractionCanceled && settings.enableMarkdownConversion && run.savedPdfFiles && run.savedPdfFiles.length > 0) {
-        this.updateOperationCard(run, `正在生成 Markdown 笔记 (0/${run.savedPdfFiles.length})…`);
+        if (run.card && this.settings.notificationsEnabled && this.settings.showOperationAfter) {
+          const mdTotal = run.savedPdfFiles.length;
+          const textParts = [
+            counts.created ? `新增 ${counts.created} 篇` : "",
+            counts.updated ? `更新 ${counts.updated} 篇` : "",
+            counts.unchanged ? `无变化 ${counts.unchanged} 篇` : "",
+            counts.skipped ? `跳过 ${counts.skipped} 篇` : "",
+          ].filter(Boolean).join(" · ");
+          const successText = (textParts || "已是最新内容") + `（后台正在转换 ${mdTotal} 篇为 Markdown）`;
+          await run.card.finish({
+            phase: "success",
+            text: successText,
+          }).catch(() => undefined);
+          run.card = undefined;
+        }
         try {
           const converted = await this.convertPdfFilesToMarkdown(run.savedPdfFiles, interactive, run);
           this.assertRunActive(run);
@@ -2443,7 +2506,8 @@ export default class ImaSpeedSyncPlugin extends Plugin {
         const report = run.report;
         try {
           if (report && !this.unloaded && this.settings.notificationsEnabled && this.settings.showOperationAfter) {
-            await run.card.finish({
+            if (!run.card.isFinished) {
+              await run.card.finish({
               phase: report.status, text: report.summary.replace(/^同步(?:完成|有异常|已取消)：/, ""),
               details: report.errors.length ? report.errors.slice(0, 3).map((error) => {
                 const message = /未能完整读取|未到达底部|未读取.*底部|正文未完整/.test(error.message)
@@ -2452,7 +2516,8 @@ export default class ImaSpeedSyncPlugin extends Plugin {
                     ? error.message.slice(error.title.length + 1).trim() : error.message).slice(0, 120);
                 return `${error.title || "同步任务"}：${message}`;
               }).join("\n\n") + (report.errors.length > 3 ? `\n另有 ${report.errors.length - 3} 项，详见同步记录。` : "") : "",
-            });
+              });
+            }
           } else {
             await run.card.dispose();
           }
@@ -2964,11 +3029,12 @@ export default class ImaSpeedSyncPlugin extends Plugin {
   private isExtractionResult(value: unknown): value is ExtractionResult {
     if (!value || typeof value !== "object" || Array.isArray(value)) return false;
     const result = value as Record<string, unknown>;
-    const hasKnownField = ["busy", "canceled", "items", "errors", "skippedTitles"]
+    const hasKnownField = ["busy", "canceled", "locked", "items", "errors", "skippedTitles"]
       .some((key) => Object.prototype.hasOwnProperty.call(result, key));
     if (!hasKnownField) return false;
     if (result.busy !== undefined && typeof result.busy !== "boolean") return false;
     if (result.canceled !== undefined && typeof result.canceled !== "boolean") return false;
+    if (result.locked !== undefined && typeof result.locked !== "boolean") return false;
     if (
       result.items !== undefined &&
       (!Array.isArray(result.items) ||

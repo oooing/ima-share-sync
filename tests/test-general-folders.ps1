@@ -78,6 +78,13 @@ Check $true ($left -cne $right) 'sanitized folder collision has stable suffix'
     $rows=@(Get-ImaFolderRecords $null 78)
     Check 78 $rows.Count 'lazy loading percentage regression still completes all metadata'
     Check 2 $script:scrollCalls 'does not mistake expanded scroll extent for failed scrolling'
+    # 模拟用户现场：预期 19 项，首屏读到 16 项，滚动位置卡在 0->0 不动
+    $scroller.Pattern.Current.VerticalScrollPercent = 0
+    function Set-ImaTitleListScrollPercent { $scroller.Pattern.Current.VerticalScrollPercent=0 }
+    function Get-ImaGeneralTitleSnapshot { return [pscustomobject]@{AllRecords=@(1..16 | ForEach-Object { [pscustomobject]@{Key="$_";Y=0;ScrollPercent=0;ScrollStep=0} })} }
+    $partialRows = @(Get-ImaFolderRecords $null 19)
+    Check 16 $partialRows.Count 'stalled scroll retains 16 read records instead of aborting whole sync'
+
     function Get-ImaGeneralTitleSnapshot { return [pscustomobject]@{AllRecords=@()} }
     function Set-ImaTitleListScrollPercent { $scroller.Pattern.Current.VerticalScrollPercent=0 }
     Check-Throws { Get-ImaFolderRecords $null 78 } 'genuine no-progress still stops safely'
