@@ -256,8 +256,8 @@ function Set-CardState([string]$Phase, [string]$Text) {
                 Set-StatusBadge '需关注' '#FBBF24' '#2E2214' '#5C401D' '#FDE68A'
                 $controls.Details.Visibility = 'Visible'
                 $controls.Details.Content = '查看原因'
-                $script:closeAt = [DateTime]::UtcNow.AddSeconds(8)
-                $controls.Hint.Text = '8 秒后自动关闭'
+                $script:closeAt = [DateTime]::MaxValue
+                $controls.Hint.Text = '请查看原因并手动关闭'
             } elseif ($Phase -eq 'canceled') {
                 Set-StatusBadge '已停止' '#9CA3AF' '#22212E' '#3B394D' '#D1D5DB'
                 $script:closeAt = [DateTime]::UtcNow.AddSeconds(5)
@@ -357,6 +357,10 @@ $timer.Add_Tick({
         $seconds = [Math]::Max(0, [Math]::Ceiling(($script:deadline - [DateTime]::UtcNow).TotalSeconds))
         $controls.Hint.Text = "$seconds 秒后自动开始"
         if ($seconds -le 0) { Start-CardOperation }
+    }
+    if ($script:phase -in @('success','canceled') -and $script:closeAt -ne [DateTime]::MaxValue) {
+        $seconds = [Math]::Max(0, [Math]::Ceiling(($script:closeAt - [DateTime]::UtcNow).TotalSeconds))
+        $controls.Hint.Text = "$seconds 秒后自动关闭"
     }
     if ([DateTime]::UtcNow -ge $script:closeAt) { $window.Close() }
 })

@@ -2423,7 +2423,8 @@ export default class ImaSpeedSyncPlugin extends Plugin {
       }
 
       if (!extractionCanceled && settings.enableMarkdownConversion && run.savedPdfFiles && run.savedPdfFiles.length > 0) {
-        if (run.card && this.settings.notificationsEnabled && this.settings.showOperationAfter) {
+        const hasErrors = issues.length > 0 || saveErrors.length > 0 || counts.conflict > 0;
+        if (!hasErrors && run.card && this.settings.notificationsEnabled && this.settings.showOperationAfter) {
           const mdTotal = run.savedPdfFiles.length;
           const textParts = [
             counts.created ? `新增 ${counts.created} 篇` : "",
@@ -2437,6 +2438,9 @@ export default class ImaSpeedSyncPlugin extends Plugin {
             text: successText,
           }).catch(() => undefined);
           run.card = undefined;
+        } else if (hasErrors && run.card) {
+          const mdTotal = run.savedPdfFiles.length;
+          this.updateOperationCard(run, `正在后台转换 ${mdTotal} 篇为 Markdown（本轮有部分异常）…`);
         }
         try {
           const converted = await this.convertPdfFilesToMarkdown(run.savedPdfFiles, interactive, run);
