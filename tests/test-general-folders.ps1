@@ -359,4 +359,81 @@ function Make-Record($Name,$Kind,$Time,$Id='', $Count=0) {
     Check 0 $result.items.Count 'no older-item backfill'
     Check 0 $result.errors.Count 'skip is not failure'
 }
+& {
+    # 验证严格的位置确认（严格按面包屑状态，拒绝盲目放行）
+    $script:FolderName = '2026年10月【最新】'
+    $script:GeneralFolderPath = @()
+
+    $fakeRoot = [pscustomobject]@{
+        Current = [pscustomobject]@{ NativeWindowHandle = 1; ProcessId = 1234 }
+    }
+
+    function Get-ImaRoot { return $fakeRoot }
+    function Get-ImaTitleListElement { param($Root) return [pscustomobject]@{ Current = [pscustomobject]@{ IsOffscreen = $false }; GetRuntimeId = { return @(99, 99) } } }
+    function Start-ImaCancelableSleep { param($Ms) }
+    function Test-ImaGeneralScanBudget {}
+
+    # 1. 模拟停留在“内容”首页时：面包屑只有“内容(17763)”，绝不能把首页误判为目标文件夹
+    function Get-ImaBreadcrumbItems {
+        param($Root)
+        return @([pscustomobject]@{ Current = [pscustomobject]@{ Name = '内容(17763)' } })
+    }
+    function Test-ImaNamedElement { param($Root, $Name) return $false }
+    Check $false (Test-ImaFolderSelected '2026年10月【最新】') 'home page must not be mistaken for selected target folder'
+
+    # 2. 模拟到达目标文件夹：面包屑末项匹配
+    function Get-ImaBreadcrumbItems {
+        param($Root)
+        return @(
+            [pscustomobject]@{ Current = [pscustomobject]@{ Name = '内容(17763)' } },
+            [pscustomobject]@{ Current = [pscustomobject]@{ Name = '2026年10月【最新】' } }
+        )
+    }
+    Check $true (Test-ImaFolderSelected '2026年10月【最新】') 'target folder is recognized when breadcrumb end matches'
+
+    # 3. 模拟 Wait-ImaFolderSelected 延迟切换：前 2 次停留在首页，第 3 次切换成功
+    $script:pollCount = 0
+    function Get-ImaBreadcrumbItems {
+        param($Root)
+        $script:pollCount++
+        if ($script:pollCount -lt 3) {
+            return @([pscustomobject]@{ Current = [pscustomobject]@{ Name = '内容(17763)' } })
+        }
+        return @(
+            [pscustomobject]@{ Current = [pscustomobject]@{ Name = '内容(17763)' } },
+            [pscustomobject]@{ Current = [pscustomobject]@{ Name = '2026年10月【最新】' } }
+        )
+    }
+    function Wait-ImaTitleListStable { param($Root, $TimeoutMilliseconds=8000, $Recover=$null) return $fakeRoot }
+    $waitRes = Wait-ImaFolderSelected '2026年10月【最新】'
+    Check $fakeRoot $waitRes 'Wait-ImaFolderSelected safely waits for navigation to complete before returning'
+
+    # 4. 模拟超时未进入时，抛错附带诊断信息
+    function Get-ImaBreadcrumbItems {
+        param($Root)
+        return @([pscustomobject]@{ Current = [pscustomobject]@{ Name = '内容(17763)' } })
+    }
+    $timeoutMsg = ''
+    try {
+        # 模拟超短 deadline 抛错
+        $deadline = [DateTime]::UtcNow.AddMilliseconds(-100)
+        Wait-ImaFolderSelected '不存在的目录'
+    } catch {
+        $timeoutMsg = $_.Exception.Message
+    }
+    Check $true ($timeoutMsg -like '*当前停留在：内容(17763)*') 'timeout error includes current breadcrumb diagnostic text'
+
+    # 5. 模拟进入子文件夹时的多级面包屑路径比对
+    function Get-ImaBreadcrumbItems {
+        param($Root)
+        return @(
+            [pscustomobject]@{ Current = [pscustomobject]@{ Name = '内容(17763)' } },
+            [pscustomobject]@{ Current = [pscustomobject]@{ Name = '2026年10月【最新】' } },
+            [pscustomobject]@{ Current = [pscustomobject]@{ Name = '261019' } }
+        )
+    }
+    $script:GeneralFolderPath = @('261019')
+    $resSub = Open-ImaGeneralPath @('261019')
+    Check $fakeRoot $resSub 'Open-ImaGeneralPath matches active subfolder breadcrumb without reload'
+}
 Write-Output "PASS: $script:Checks general folder assertions (offline, no desktop input)"

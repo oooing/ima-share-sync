@@ -1237,13 +1237,19 @@ function Open-ImaSpeedFolder {
             -FailureHint "未找到配置的 IMA 文件夹「$($script:FolderName)」，请确认分享仍可访问，并检查设置中的来源文件夹"
     }
 
-    Invoke-ImaNamedElement $root $script:FolderName
-    Start-ImaCancelableSleep 600
-    $root = Get-ImaRoot
-    $root = Wait-ImaTitleListStable $root -Recover {
-        $retryRoot = Get-ImaRoot
-        if (Test-ImaNamedElement $retryRoot $script:FolderName) {
-            Invoke-ImaNamedElement $retryRoot $script:FolderName
+    # 如果当前已经处于目标文件夹（例如之前停留过，面包屑末项已是该文件夹），直接等待列表稳定即可
+    if (Test-ImaFolderSelected $script:FolderName) {
+        Write-SyncLog "IMA 当前已处于目标文件夹 [$($script:FolderName)]，无需重复打开"
+        $root = Wait-ImaTitleListStable $root
+    }
+    else {
+        Invoke-ImaNamedElement $root $script:FolderName
+        # 核心根治：点击文件夹卡片后，必须严格等待位置确认（确认面包屑末项已变为该文件夹），严禁仅等列表稳定而提前放行
+        $root = Wait-ImaFolderSelected $script:FolderName -RetryAction {
+            $retryRoot = Get-ImaRoot
+            if (Test-ImaNamedElement $retryRoot $script:FolderName) {
+                Invoke-ImaNamedElement $retryRoot $script:FolderName
+            }
         }
     }
     $script:MainWindowHandle = [IntPtr]$root.Current.NativeWindowHandle
@@ -3894,11 +3900,38 @@ function Get-ImaBreadcrumbItems([Windows.Automation.AutomationElement]$Root) {
         }
     }
     if ($breadcrumbContainer) {
-        $items = @($breadcrumbContainer.FindAll([Windows.Automation.TreeScope]::Descendants,
+        $listItems = @($breadcrumbContainer.FindAll([Windows.Automation.TreeScope]::Descendants,
             (New-Object Windows.Automation.PropertyCondition(
                 [Windows.Automation.AutomationElement]::ControlTypeProperty, [Windows.Automation.ControlType]::ListItem))) |
-            Where-Object { -not $_.Current.IsOffscreen })
-        if ($items.Count -gt 0) { return $items }
+            Where-Object { -not $_.Current.IsOffscreen -and -not [string]::IsNullOrWhiteSpace($_.Current.Name) })
+        if ($listItems.Count -gt 0) { return $listItems }
+
+        # 若容器无 ListItem 结构（如纯链接或文本节点），按视觉顺序提取有效具名子项
+        $candidates = @($breadcrumbContainer.FindAll([Windows.Automation.TreeScope]::Descendants, [Windows.Automation.Condition]::TrueCondition) |
+            Where-Object {
+                -not $_.Current.IsOffscreen -and
+                -not [string]::IsNullOrWhiteSpace($_.Current.Name) -and
+                ($_.Current.Name.Trim() -cnotin @('/', '>', '\', '|', '·', '-', '»'))
+            })
+        $validItems = New-Object Collections.Generic.List[Windows.Automation.AutomationElement]
+        foreach ($c in $candidates) {
+            $t = $c.Current.ControlType
+            if ($t -eq [Windows.Automation.ControlType]::Hyperlink -or
+                $t -eq [Windows.Automation.ControlType]::Button -or
+                $t -eq [Windows.Automation.ControlType]::Text -or
+                $t -eq [Windows.Automation.ControlType]::Custom -or
+                $t -eq [Windows.Automation.ControlType]::Group) {
+                $name = $c.Current.Name.Trim()
+                $alreadyAdded = $false
+                foreach ($existing in $validItems) {
+                    if ($existing.Current.Name.Trim() -ceq $name) {
+                        $alreadyAdded = $true; break
+                    }
+                }
+                if (-not $alreadyAdded) { $validItems.Add($c) }
+            }
+        }
+        if ($validItems.Count -gt 0) { return $validItems.ToArray() }
     }
     # 回退机制：全树查找 ListItem，但排除 shareKnowledgeContentList 内容列表内的项
     $listElement = Get-ImaTitleListElement $Root
@@ -3923,20 +3956,25 @@ function Get-ImaBreadcrumbItems([Windows.Automation.AutomationElement]$Root) {
 }
 
 function Test-ImaFolderSelected([string]$Name) {
+    if ([string]::IsNullOrWhiteSpace($Name)) { return $false }
     $crumbs = @(Get-ImaBreadcrumbItems (Get-ImaRoot))
-    if ($crumbs.Count -eq 0) { return $false }
-    $lastCrumb = $crumbs[-1]
-    if (Test-ImaNamedElement $lastCrumb $Name) { return $true }
-    if ($lastCrumb.Current.Name -ceq $Name -or $lastCrumb.Current.Name.Trim() -ceq $Name.Trim()) { return $true }
+    if ($crumbs.Count -gt 0) {
+        $lastCrumb = $crumbs[-1]
+        if (Test-ImaNamedElement $lastCrumb $Name) { return $true }
+        if ($lastCrumb.Current.Name -ceq $Name -or $lastCrumb.Current.Name.Trim() -ceq $Name.Trim()) { return $true }
+        if ($crumbs.Count -eq 1 -and ($crumbs[0].Current.Name.Trim() -ceq $Name.Trim())) { return $true }
+    }
     return $false
 }
 
-function Wait-ImaFolderSelected([string]$Name, [object]$FolderRecord = $null) {
+function Wait-ImaFolderSelected([string]$Name, [object]$FolderRecord = $null, [scriptblock]$RetryAction = $null) {
     $deadline = [DateTime]::UtcNow.AddSeconds(12)
     $lastRetry = [DateTime]::UtcNow
     while ([DateTime]::UtcNow -lt $deadline) {
         Test-ImaGeneralScanBudget
         if (Test-ImaFolderSelected $Name) {
+            $crumbs = @(Get-ImaBreadcrumbItems (Get-ImaRoot) | ForEach-Object { [string]$_.Current.Name.Trim() })
+            Write-SyncLog "已确认进入目标文件夹 [$Name]，当前面包屑：$($crumbs -join ' > ')"
             try {
                 return Wait-ImaTitleListStable (Get-ImaRoot) -TimeoutMilliseconds 8000
             }
@@ -3949,19 +3987,31 @@ function Wait-ImaFolderSelected([string]$Name, [object]$FolderRecord = $null) {
                 throw
             }
         }
-        # 如果等待超过 1.5 秒仍未跳转，且提供了 FolderRecord，主动重试一次点击
-        if ($FolderRecord -and ([DateTime]::UtcNow - $lastRetry).TotalMilliseconds -ge 1500) {
+        # 如果等待超过 1.5 秒仍未跳转，主动重试一次点击
+        if (([DateTime]::UtcNow - $lastRetry).TotalMilliseconds -ge 1500) {
             $lastRetry = [DateTime]::UtcNow
-            Write-SyncLog "等待进入文件夹 [$Name] 超过 1.5s，尝试再次触发打开..."
-            try {
-                Invoke-ImaArticleRecord $FolderRecord
-            } catch {
-                Write-SyncLog "重试打开文件夹 [$Name] 提示: $($_.Exception.Message)"
+            if ($FolderRecord) {
+                Write-SyncLog "等待进入文件夹 [$Name] 超过 1.5s，尝试再次触发打开..."
+                try {
+                    Invoke-ImaArticleRecord $FolderRecord
+                } catch {
+                    Write-SyncLog "重试打开文件夹 [$Name] 提示: $($_.Exception.Message)"
+                }
+            }
+            elseif ($RetryAction) {
+                Write-SyncLog "等待进入文件夹 [$Name] 超过 1.5s，执行重试操作..."
+                try {
+                    & $RetryAction
+                } catch {
+                    Write-SyncLog "重试操作 [$Name] 提示: $($_.Exception.Message)"
+                }
             }
         }
         Start-ImaCancelableSleep 150
     }
-    throw "文件夹跳转未完成：$Name（未继续点击其他条目）"
+    $currentCrumbs = @(Get-ImaBreadcrumbItems (Get-ImaRoot) | ForEach-Object { [string]$_.Current.Name.Trim() })
+    $crumbsText = if ($currentCrumbs.Count) { $currentCrumbs -join ' > ' } else { '（无面包屑）' }
+    throw "文件夹跳转未完成：$Name（当前停留在：$crumbsText，未继续点击其他条目）"
 }
 
 function Invoke-ImaNativeClick([int]$TargetX, [int]$TargetY) {
@@ -3982,10 +4032,22 @@ function Invoke-ImaNativeClick([int]$TargetX, [int]$TargetY) {
 }
 
 function Open-ImaBreadcrumb([string]$Name) {
-    $crumbs = @(Get-ImaBreadcrumbItems (Get-ImaRoot) | Where-Object {
-        (Test-ImaNamedElement $_ $Name) -or ($_.Current.Name -ceq $Name)
-    })
-    if ($crumbs.Count -ne 1) { throw "文件夹导航不唯一或已丢失：$Name" }
+    # 增加带重试的探测逻辑（最多重试 4 次，每次间隔 250ms）
+    $crumbs = @()
+    for ($attempt = 0; $attempt -lt 4; $attempt++) {
+        $crumbs = @(Get-ImaBreadcrumbItems (Get-ImaRoot) | Where-Object {
+            (Test-ImaNamedElement $_ $Name) -or ($_.Current.Name -ceq $Name) -or ($_.Current.Name.Trim() -ceq $Name.Trim())
+        })
+        if ($crumbs.Count -gt 0) { break }
+        Start-ImaCancelableSleep 250
+    }
+
+    if ($crumbs.Count -ne 1) {
+        $allCrumbs = @(Get-ImaBreadcrumbItems (Get-ImaRoot) | ForEach-Object { [string]$_.Current.Name.Trim() })
+        $crumbsText = if ($allCrumbs.Count) { $allCrumbs -join ' > ' } else { '（无面包屑）' }
+        throw "文件夹导航不唯一或已丢失：$Name（当前停留在：$crumbsText，匹配到 $($crumbs.Count) 项）"
+    }
+
     Invoke-ImaNamedElement $crumbs[0] $Name
     Start-ImaCancelableSleep 300
     if (-not (Test-ImaFolderSelected $Name)) {
@@ -4114,24 +4176,23 @@ function Get-ImaGeneralCandidates([Windows.Automation.AutomationElement]$Root, [
 
 function Open-ImaGeneralPath([string[]]$Parts) {
     $crumbs = @(Get-ImaBreadcrumbItems (Get-ImaRoot))
-    $crumbNames = @($crumbs | ForEach-Object { [string]$_.Current.Name })
+    $crumbNames = @($crumbs | ForEach-Object { [string]$_.Current.Name.Trim() })
 
     # 在真实面包屑中定位来源根目录（例如过滤掉“内容(16966)”等前置父节点）
     $rootIndex = -1
     for ($i = 0; $i -lt @($crumbNames).Count; $i++) {
-        if ($crumbNames[$i] -ceq $script:FolderName) {
+        if ($crumbNames[$i] -ceq $script:FolderName -or $crumbNames[$i] -ceq $script:FolderName.Trim()) {
             $rootIndex = $i
             break
         }
     }
 
     if ($rootIndex -ge 0) {
-        $currentParts = if ($rootIndex -lt @($crumbNames).Count - 1) {
-            @($crumbNames[($rootIndex + 1)..(@($crumbNames).Count - 1)])
-        } else {
-            @()
+        $currentParts = New-Object Collections.Generic.List[string]
+        for ($i = $rootIndex + 1; $i -lt @($crumbNames).Count; $i++) {
+            $currentParts.Add($crumbNames[$i])
         }
-        $matchesCurrent = (@($currentParts).Count -eq @($Parts).Count)
+        $matchesCurrent = ($currentParts.Count -eq @($Parts).Count)
         if ($matchesCurrent) {
             for ($i = 0; $i -lt @($Parts).Count; $i++) {
                 if ($currentParts[$i] -cne $Parts[$i]) { $matchesCurrent = $false; break }
