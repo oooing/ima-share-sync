@@ -3955,80 +3955,354 @@ function Get-ImaBreadcrumbItems([Windows.Automation.AutomationElement]$Root) {
     return $filtered.ToArray()
 }
 
-function Test-ImaFolderSelected([string]$Name) {
-    if ([string]::IsNullOrWhiteSpace($Name)) { return $false }
-    $crumbs = @(Get-ImaBreadcrumbItems (Get-ImaRoot))
-    if ($crumbs.Count -gt 0) {
-        $lastCrumb = $crumbs[-1]
-        if (Test-ImaNamedElement $lastCrumb $Name) { return $true }
-        if ($lastCrumb.Current.Name -ceq $Name -or $lastCrumb.Current.Name.Trim() -ceq $Name.Trim()) { return $true }
-        if ($crumbs.Count -eq 1 -and ($crumbs[0].Current.Name.Trim() -ceq $Name.Trim())) { return $true }
+$script:ImaNativeClickInvoker = $null
+
+function Invoke-ImaSafeNativeClick(
+    [int]$TargetX,
+    [int]$TargetY,
+    [IntPtr]$ExpectedRootHandle = [IntPtr]::Zero
+) {
+    # 防线 1：前台交互许可检查（核心约束：不能在 allowForeground=false 时发送真实输入）
+    if (-not $script:AllowForeground) {
+        Write-SyncLog "原生补点击被拒绝：当前配置禁止前台交互 (allowForeground=false)"
+        return [pscustomobject]@{ Success = $false; Executed = $false; Reason = 'PermissionDenied' }
     }
+
+    # 防线 2：测试环境假能力注入
+    if ($script:ImaNativeClickInvoker) {
+        return & $script:ImaNativeClickInvoker $TargetX $TargetY $ExpectedRootHandle
+    }
+
+    # 防线 3：类型与方法有效性解析
+    Initialize-ImaNativeMethods
+    $type = "ImaSpeedSync.NativeMethods" -as [type]
+    if (-not $type) {
+        foreach ($asm in [AppDomain]::CurrentDomain.GetAssemblies()) {
+            $t = $asm.GetType('ImaSpeedSync.NativeMethods')
+            if ($t) { $type = $t; break }
+        }
+    }
+    if (-not $type) {
+        Write-SyncLog "原生补点击失败：ImaSpeedSync.NativeMethods 类型无法取得"
+        return [pscustomobject]@{ Success = $false; Executed = $false; Reason = 'TypeNotFound' }
+    }
+
+    $mSetPos = $type.GetMethod('SetCursorPos')
+    $mMouseEv = $type.GetMethod('mouse_event')
+    $mWindowFromPoint = $type.GetMethod('WindowFromPoint', [Reflection.BindingFlags]'Static,NonPublic,Public')
+    $mGetAncestor = $type.GetMethod('GetAncestor', [Reflection.BindingFlags]'Static,NonPublic,Public')
+
+    if (-not $mSetPos -or -not $mMouseEv) {
+        Write-SyncLog "原生补点击失败：未找到 SetCursorPos 或 mouse_event 方法"
+        return [pscustomobject]@{ Success = $false; Executed = $false; Reason = 'MethodNotFound' }
+    }
+
+    # 防线 4：工作站锁定检查
+    if (Test-ImaWorkstationLocked) {
+        Write-SyncLog "原生补点击被拒绝：工作站处于锁定状态"
+        return [pscustomobject]@{ Success = $false; Executed = $false; Reason = 'WorkstationLocked' }
+    }
+
+    # 防线 5：目标坐标遮挡与窗口归属校验（Hit-Test / Occlusion Check）
+    if ($ExpectedRootHandle -ne [IntPtr]::Zero -and $mWindowFromPoint -and $mGetAncestor) {
+        try {
+            $pointType = $type.GetNestedType('POINT', [Reflection.BindingFlags]'Public,NonPublic')
+            if ($pointType) {
+                $pt = [Activator]::CreateInstance($pointType)
+                $pt.X = $TargetX
+                $pt.Y = $TargetY
+                $hitWnd = $mWindowFromPoint.Invoke($null, @($pt))
+                if ($hitWnd -ne [IntPtr]::Zero) {
+                    $ancestor = $mGetAncestor.Invoke($null, @($hitWnd, [uint32]2))
+                    if ($ancestor -ne $ExpectedRootHandle -and $hitWnd -ne $ExpectedRootHandle) {
+                        Write-SyncLog "原生补点击被拒绝：目标坐标 ($TargetX, $TargetY) 被其他窗口遮挡或属于其他窗口 (HitWnd=$hitWnd, Expected=$ExpectedRootHandle)"
+                        return [pscustomobject]@{ Success = $false; Executed = $false; Reason = 'OccludedOrMismatch' }
+                    }
+                }
+            }
+        } catch {
+            Write-SyncLog "窗口归属探测异常，放弃点击以防误点: $($_.Exception.Message)"
+            return [pscustomobject]@{ Success = $false; Executed = $false; Reason = 'HitTestFailed' }
+        }
+    }
+
+    # 执行点击
+    try {
+        [void]$mSetPos.Invoke($null, @($TargetX, $TargetY))
+        Start-Sleep -Milliseconds 40
+        [void]$mMouseEv.Invoke($null, @([uint32]2, [uint32]0, [uint32]0, [int]0, [UIntPtr]::Zero))
+        Start-Sleep -Milliseconds 40
+        [void]$mMouseEv.Invoke($null, @([uint32]4, [uint32]0, [uint32]0, [int]0, [UIntPtr]::Zero))
+        return [pscustomobject]@{ Success = $true; Executed = $true; Reason = 'Clicked' }
+    } catch {
+        Write-SyncLog "原生补点击调用执行异常: $($_.Exception.Message)"
+        return [pscustomobject]@{ Success = $false; Executed = $false; Reason = $_.Exception.Message }
+    }
+}
+
+function Invoke-ImaNativeClick([int]$TargetX, [int]$TargetY, [IntPtr]$ExpectedRootHandle = [IntPtr]::Zero) {
+    return Invoke-ImaSafeNativeClick $TargetX $TargetY $ExpectedRootHandle
+}
+
+function Test-ImaFolderSelected([string]$Name, [string[]]$ExpectedPath = $null) {
+    if ([string]::IsNullOrWhiteSpace($Name) -and ($null -eq $ExpectedPath -or $ExpectedPath.Count -eq 0)) { return $false }
+    $crumbs = @(Get-ImaBreadcrumbItems (Get-ImaRoot))
+    if ($crumbs.Count -eq 0) { return $false }
+    $crumbNames = @($crumbs | ForEach-Object { [string]$_.Current.Name.Trim() })
+
+    if ($ExpectedPath -and $ExpectedPath.Count -gt 0) {
+        if ($crumbNames.Count -ge $ExpectedPath.Count) {
+            $matched = $true
+            for ($i = 0; $i -lt $ExpectedPath.Count; $i++) {
+                $actualPart = $crumbNames[$crumbNames.Count - $ExpectedPath.Count + $i]
+                $expectedPart = $ExpectedPath[$i].Trim()
+                if ($actualPart -cne $expectedPart) {
+                    $matched = $false
+                    break
+                }
+            }
+            if ($matched) { return $true }
+        }
+        return $false
+    }
+
+    $lastCrumb = $crumbs[-1]
+    if (Test-ImaNamedElement $lastCrumb $Name) { return $true }
+    if ($lastCrumb.Current.Name -ceq $Name -or $lastCrumb.Current.Name.Trim() -ceq $Name.Trim()) { return $true }
+    if ($crumbs.Count -eq 1 -and ($crumbs[0].Current.Name.Trim() -ceq $Name.Trim())) { return $true }
     return $false
 }
 
-function Wait-ImaFolderSelected([string]$Name, [object]$FolderRecord = $null, [scriptblock]$RetryAction = $null) {
-    $deadline = [DateTime]::UtcNow.AddSeconds(12)
-    $lastRetry = [DateTime]::UtcNow
-    while ([DateTime]::UtcNow -lt $deadline) {
-        Test-ImaGeneralScanBudget
-        if (Test-ImaFolderSelected $Name) {
-            $crumbs = @(Get-ImaBreadcrumbItems (Get-ImaRoot) | ForEach-Object { [string]$_.Current.Name.Trim() })
-            Write-SyncLog "已确认进入目标文件夹 [$Name]，当前面包屑：$($crumbs -join ' > ')"
-            try {
-                return Wait-ImaTitleListStable (Get-ImaRoot) -TimeoutMilliseconds 8000
-            }
-            catch {
-                # 通用模式下若列表已加载但无匹配标题（如纯子目录列表或空目录），确认列表容器可见即视为就绪
-                $list = Get-ImaTitleListElement (Get-ImaRoot)
-                if ($list -and -not $list.Current.IsOffscreen) {
-                    return Get-ImaRoot
-                }
-                throw
-            }
+function Get-ImaFolderPageState(
+    [string]$TargetName,
+    [string[]]$ExpectedPath = $null,
+    [string[]]$ParentPath = $null
+) {
+    $root = Get-ImaRoot
+    if (-not $root) {
+        return [pscustomobject]@{
+            Status = 'RootInvalid'
+            Reason = 'IMA 根窗口未找到或句柄已失效'
+            Breadcrumbs = @()
+            ListElement = $null
+            IsTerminalError = $false
         }
-        # 如果等待超过 1.5 秒仍未跳转，主动重试一次点击
-        if (([DateTime]::UtcNow - $lastRetry).TotalMilliseconds -ge 1500) {
-            $lastRetry = [DateTime]::UtcNow
-            if ($FolderRecord) {
-                Write-SyncLog "等待进入文件夹 [$Name] 超过 1.5s，尝试再次触发打开..."
-                try {
-                    Invoke-ImaArticleRecord $FolderRecord
-                } catch {
-                    Write-SyncLog "重试打开文件夹 [$Name] 提示: $($_.Exception.Message)"
-                }
-            }
-            elseif ($RetryAction) {
-                Write-SyncLog "等待进入文件夹 [$Name] 超过 1.5s，执行重试操作..."
-                try {
-                    & $RetryAction
-                } catch {
-                    Write-SyncLog "重试操作 [$Name] 提示: $($_.Exception.Message)"
-                }
-            }
-        }
-        Start-ImaCancelableSleep 150
     }
-    $currentCrumbs = @(Get-ImaBreadcrumbItems (Get-ImaRoot) | ForEach-Object { [string]$_.Current.Name.Trim() })
-    $crumbsText = if ($currentCrumbs.Count) { $currentCrumbs -join ' > ' } else { '（无面包屑）' }
-    throw "文件夹跳转未完成：$Name（当前停留在：$crumbsText，未继续点击其他条目）"
-}
 
-function Invoke-ImaNativeClick([int]$TargetX, [int]$TargetY) {
+    $isRootOffscreen = $false
     try {
-        $type = [Type]::GetType('ImaSpeedSync.NativeMethods')
-        if ($type) {
-            $mSetPos = $type.GetMethod('SetCursorPos')
-            $mMouseEv = $type.GetMethod('mouse_event')
-            if ($mSetPos -and $mMouseEv) {
-                [void]$mSetPos.Invoke($null, @($TargetX, $TargetY))
-                Start-Sleep -Milliseconds 40
-                [void]$mMouseEv.Invoke($null, @([uint32]2, [uint32]0, [uint32]0, [int]0, [UIntPtr]::Zero))
-                Start-Sleep -Milliseconds 40
-                [void]$mMouseEv.Invoke($null, @([uint32]4, [uint32]0, [uint32]0, [int]0, [UIntPtr]::Zero))
+        if ($root.Current -and $null -ne $root.Current.PSObject.Properties['IsOffscreen']) {
+            $isRootOffscreen = [bool]$root.Current.IsOffscreen
+        }
+    } catch {}
+    if ($isRootOffscreen) {
+        return [pscustomobject]@{
+            Status = 'WindowHidden'
+            Reason = 'IMA 根窗口处于隐藏或最小化状态'
+            Breadcrumbs = @()
+            ListElement = $null
+            IsTerminalError = $false
+        }
+    }
+
+    # 终态错误页检测：例如“当前文件夹不存在”
+    try {
+        $missingFolder = $null
+        if ($root -is [Windows.Automation.AutomationElement] -or ($root.PSObject -and $null -ne $root.PSObject.Methods['FindFirst'])) {
+            $missingFolder = $root.FindFirst([Windows.Automation.TreeScope]::Descendants,
+                (New-Object Windows.Automation.PropertyCondition(
+                    [Windows.Automation.AutomationElement]::NameProperty, '当前文件夹不存在')))
+        } elseif ($root.PSObject -and $null -ne $root.PSObject.Properties['FindFirst'] -and $root.PSObject.Properties['FindFirst'].Value -is [scriptblock]) {
+            $missingFolder = & $root.FindFirst [Windows.Automation.TreeScope]::Descendants $null
+        }
+        if ($missingFolder) {
+            $isMissOffscreen = $false
+            if ($missingFolder.Current -and $null -ne $missingFolder.Current.PSObject.Properties['IsOffscreen']) {
+                $isMissOffscreen = [bool]$missingFolder.Current.IsOffscreen
+            }
+            if (-not $isMissOffscreen) {
+                return [pscustomobject]@{
+                    Status = 'TerminalError'
+                    Reason = 'IMA 提示“当前文件夹不存在”，请确认原分享文件夹仍可访问，或在设置中重新选择来源'
+                    Breadcrumbs = @()
+                    ListElement = $null
+                    IsTerminalError = $true
+                }
             }
         }
     } catch {}
+
+    $crumbs = @(Get-ImaBreadcrumbItems $root)
+    $crumbNames = @($crumbs | ForEach-Object { [string]$_.Current.Name.Trim() })
+    $listElement = Get-ImaTitleListElement $root
+
+    # 判断是否到达目标目录
+    $isTarget = $false
+    if ($ExpectedPath -and $ExpectedPath.Count -gt 0) {
+        if ($crumbNames.Count -ge $ExpectedPath.Count) {
+            $isTarget = $true
+            for ($i = 0; $i -lt $ExpectedPath.Count; $i++) {
+                if ($crumbNames[$crumbNames.Count - $ExpectedPath.Count + $i] -cne $ExpectedPath[$i].Trim()) {
+                    $isTarget = $false
+                    break
+                }
+            }
+        }
+    } elseif ($crumbNames.Count -gt 0 -and -not [string]::IsNullOrWhiteSpace($TargetName)) {
+        $last = $crumbNames[-1]
+        if ($last -ceq $TargetName.Trim()) { $isTarget = $true }
+    }
+
+    if ($isTarget) {
+        return [pscustomobject]@{
+            Status = 'ReachedTarget'
+            Reason = "已确认到达目标路径 [$($crumbNames -join ' > ')]"
+            Breadcrumbs = $crumbNames
+            ListElement = $listElement
+            IsTerminalError = $false
+        }
+    }
+
+    # 判断是否仍在父目录
+    $isInParent = $false
+    if ($ParentPath -and $ParentPath.Count -gt 0) {
+        if ($crumbNames.Count -ge $ParentPath.Count) {
+            $isInParent = $true
+            for ($i = 0; $i -lt $ParentPath.Count; $i++) {
+                if ($crumbNames[$crumbNames.Count - $ParentPath.Count + $i] -cne $ParentPath[$i].Trim()) {
+                    $isInParent = $false
+                    break
+                }
+            }
+        }
+    }
+
+    if ($isInParent) {
+        return [pscustomobject]@{
+            Status = 'InParent'
+            Reason = "仍处于父目录路径 [$($crumbNames -join ' > ')]"
+            Breadcrumbs = $crumbNames
+            ListElement = $listElement
+            IsTerminalError = $false
+        }
+    }
+
+    return [pscustomobject]@{
+        Status = 'Navigating'
+        Reason = if ($crumbNames.Count -eq 0) { '导航进行中（当前面包屑暂时为空，等待页面渲染）' } else { "导航进行中（当前过渡面包屑：$($crumbNames -join ' > ')）" }
+        Breadcrumbs = $crumbNames
+        ListElement = $listElement
+        IsTerminalError = $false
+    }
+}
+
+function Wait-ImaFolderSelected(
+    [string]$Name,
+    [object]$FolderRecord = $null,
+    [scriptblock]$RetryAction = $null,
+    [string[]]$ExpectedPath = $null,
+    [string[]]$ParentPath = $null,
+    [int]$TimeoutSeconds = 12
+) {
+    $navCorrId = [Guid]::NewGuid().ToString('N').Substring(0, 8)
+    $expectedPathText = if ($ExpectedPath) { $ExpectedPath -join ' > ' } else { $Name }
+    $parentPathText = if ($ParentPath) { $ParentPath -join ' > ' } else { '（未指定）' }
+    Write-SyncLog "[$navCorrId] 开始等待进入目标文件夹 [$Name]，预期路径：$expectedPathText，父路径：$parentPathText"
+
+    $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
+    $lastRetryTime = [DateTime]::UtcNow
+    $retryCount = 0
+    $maxRetries = 2
+    $minRetryIntervalMs = 2000
+    $navigatingObserved = $false
+    $lastState = $null
+
+    while ([DateTime]::UtcNow -lt $deadline) {
+        Test-ImaCancellation
+        Test-ImaGeneralScanBudget
+
+        $state = Get-ImaFolderPageState -TargetName $Name -ExpectedPath $ExpectedPath -ParentPath $ParentPath
+        $lastState = $state
+
+        switch ($state.Status) {
+            'ReachedTarget' {
+                $crumbsText = if ($state.Breadcrumbs.Count) { $state.Breadcrumbs -join ' > ' } else { $Name }
+                Write-SyncLog "[$navCorrId] 已确认进入目标文件夹 [$Name]，面包屑：$crumbsText"
+                try {
+                    return Wait-ImaTitleListStable (Get-ImaRoot) -TimeoutMilliseconds 8000
+                }
+                catch {
+                    # 通用模式下：空目录（合法无条目）或纯子目录列表，列表容器存在且可见即视为就绪
+                    $list = Get-ImaTitleListElement (Get-ImaRoot)
+                    if ($list -and -not $list.Current.IsOffscreen) {
+                        return Get-ImaRoot
+                    }
+                    throw
+                }
+            }
+            'TerminalError' {
+                Write-SyncLog "[$navCorrId] 目标文件夹呈现终态错误: $($state.Reason)"
+                throw $state.Reason
+            }
+            'WindowHidden' {
+                Write-SyncLog "[$navCorrId] 根窗口处于隐藏状态，中止等待: $($state.Reason)"
+                throw $state.Reason
+            }
+            'Navigating' {
+                $navigatingObserved = $true
+                # 导航过渡中（面包屑或列表暂时不可见），严禁补发输入，保持观察
+            }
+            'InParent' {
+                # 只有未观察到导航切换痕迹、且仍在父目录、且超过最小重试间隔时，才允许有限重试
+                $elapsedSinceRetry = ([DateTime]::UtcNow - $lastRetryTime).TotalMilliseconds
+                if (-not $navigatingObserved -and $elapsedSinceRetry -ge $minRetryIntervalMs -and $retryCount -lt $maxRetries) {
+                    $retryCount++
+                    $lastRetryTime = [DateTime]::UtcNow
+                    Write-SyncLog "[$navCorrId] 确认仍处于父目录，第 $retryCount 次尝试受控重试打开 [$Name]..."
+
+                    if ($FolderRecord) {
+                        try {
+                            # 重新在当前父目录根节点查找新鲜目标卡片，严禁直接使用旧缓存对象
+                            $freshRoot = Get-ImaRoot
+                            $freshList = Get-ImaTitleListElement $freshRoot
+                            $freshCandidates = if ($freshList) {
+                                @((Get-ImaGeneralTitleSnapshot $freshList -IncludeOffscreen).AllRecords |
+                                    Where-Object { $_.Kind -eq 'folder' -and $_.Name -ceq $Name })
+                            } else { @() }
+
+                            if ($freshCandidates.Count -eq 1) {
+                                Invoke-ImaArticleRecord $freshCandidates[0]
+                            } elseif ($freshCandidates.Count -gt 1) {
+                                Write-SyncLog "[$navCorrId] 父目录中存在同名文件夹歧义 ($($freshCandidates.Count) 项)，放弃盲目补点"
+                            } else {
+                                Write-SyncLog "[$navCorrId] 父目录中未重新找到目标文件夹卡片 [$Name]，放弃盲目补点"
+                            }
+                        } catch {
+                            Write-SyncLog "[$navCorrId] 重试打开文件夹 [$Name] 异常: $($_.Exception.Message)"
+                        }
+                    }
+                    elseif ($RetryAction) {
+                        try {
+                            & $RetryAction
+                        } catch {
+                            Write-SyncLog "[$navCorrId] 执行重试动作异常: $($_.Exception.Message)"
+                        }
+                    }
+                }
+            }
+            default {
+                # 其他未知状态，不补点击，等待下一次采样
+            }
+        }
+
+        Start-ImaCancelableSleep 120
+    }
+
+    $finalCrumbs = if ($lastState -and $lastState.Breadcrumbs.Count) { $lastState.Breadcrumbs -join ' > ' } else { '（无面包屑）' }
+    $finalReason = if ($lastState) { $lastState.Reason } else { '等待超时' }
+    $diagMsg = "文件夹跳转未完成：$Name（当前停留在：$finalCrumbs，状态：$($lastState.Status)，诊断：$finalReason，重试次数：$retryCount，未继续点击其他条目）"
+    Write-SyncLog "[$navCorrId] 导航最终失败: $diagMsg"
+    throw $diagMsg
 }
 
 function Open-ImaBreadcrumb([string]$Name) {
@@ -4049,18 +4323,7 @@ function Open-ImaBreadcrumb([string]$Name) {
     }
 
     Invoke-ImaNamedElement $crumbs[0] $Name
-    Start-ImaCancelableSleep 300
-    if (-not (Test-ImaFolderSelected $Name)) {
-        try {
-            $rect = $crumbs[0].Current.BoundingRectangle
-            if ($rect.Width -gt 0 -and $rect.Height -gt 0 -and -not $crumbs[0].Current.IsOffscreen) {
-                $cx = [int]($rect.X + $rect.Width / 2)
-                $cy = [int]($rect.Y + $rect.Height / 2)
-                Invoke-ImaNativeClick $cx $cy
-            }
-        } catch {}
-    }
-    return Wait-ImaFolderSelected $Name
+    return Wait-ImaFolderSelected $Name -ExpectedPath @($Name)
 }
 
 function Get-ImaGeneralCandidates([Windows.Automation.AutomationElement]$Root, [int]$Limit) {
@@ -4213,7 +4476,9 @@ function Open-ImaGeneralPath([string[]]$Parts) {
         $folders = @($cached | Where-Object { $_.Kind -eq 'folder' -and $_.Name -ceq $part })
         if ($folders.Count -ne 1) { throw "子目录无法唯一定位：$part" }
         Invoke-ImaArticleRecord $folders[0]
-        $root = Wait-ImaFolderSelected $part $folders[0]
+        $parentPath = @($script:FolderName) + $walked
+        $expectedPath = @($script:FolderName) + $walked + @($part)
+        $root = Wait-ImaFolderSelected $part $folders[0] -ExpectedPath $expectedPath -ParentPath $parentPath
         $walked += $part
     }
     $script:GeneralFolderPath = @($walked)
@@ -4224,11 +4489,22 @@ function Convert-ImaLocalName([string]$Name) {
     $safe = ($Name -replace '[\r\n\t]+', ' ' -replace '\s{2,}', ' ').Trim()
     $replacements = @{ '<'='＜'; '>'='＞'; ':'='：'; '"'='＂'; '/'='／'; '\'='＼'; '|'='｜'; '?'='？'; '*'='＊' }
     foreach ($key in $replacements.Keys) { $safe = $safe.Replace($key, $replacements[$key]) }
-    $safe = ($safe -replace '[\x00-\x1f\x7f]', ' ').Trim().TrimEnd('.', ' ')
+    $safe = ($safe -replace '[\x00-\x1f\x7f]', ' ' -replace '\s{2,}', ' ').Trim().TrimEnd('.', ' ')
     if (-not $safe) { $safe = '未命名文章' }
     $safe = (@([regex]::Matches($safe, '(?s)[\uD800-\uDBFF][\uDC00-\uDFFF]|.') | Select-Object -First 120 | ForEach-Object { $_.Value }) -join '').TrimEnd('.', ' ')
     if ($safe -match '^(?i:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\..*)?$') { $safe += '_' }
     return $safe
+}
+
+function Get-ImaOriginalFileExtension([object]$Record) {
+    # IMA titles are display text, not Windows paths. Read the suffix before
+    # sanitizing/truncating the stem, so long titles retain their file type.
+    $suffix = [regex]::Match(([string]$Record.Name).Trim(), '(?i)\.[a-z0-9]+\z')
+    $extension = $suffix.Value.ToLowerInvariant()
+    if ($extension -notin @('.pdf','.png','.jpg','.jpeg','.gif','.webp','.mp3','.wav','.m4a','.mp4','.webm','.ogg')) {
+        throw "尚未支持此原文件类型：$($Record.Kind)；未将预览或摘要当作原文件保存"
+    }
+    return $extension
 }
 
 function Get-ImaLocalRelativePath([object]$Record) {
@@ -4243,10 +4519,9 @@ function Get-ImaLocalRelativePath([object]$Record) {
         }
         $parts += $safe
     }
-    $name = Convert-ImaLocalName $Record.Name
-    if ($Record.Kind -eq 'note' -or $Record.Kind -eq 'weburl') { $name += '.md' }
+    if ($Record.Kind -eq 'note' -or $Record.Kind -eq 'weburl') { $name = (Convert-ImaLocalName $Record.Name) + '.md' }
     else {
-        $extension = [IO.Path]::GetExtension($Record.Name).ToLowerInvariant()
+        $extension = Get-ImaOriginalFileExtension $Record
         $name = (Convert-ImaLocalName ($Record.Name -replace '\.[^.]+$', '')) + $extension
     }
     return (@($parts) + @($name)) -join '/'
@@ -4259,54 +4534,142 @@ function Invoke-ImaArticleRecord([object]$Record) {
         throw "同名文章窗口已打开或身份无法确认，请先关闭该文章窗口后重试：$($Record.Name)"
     }
     $root = Get-ImaRoot
+    $deadline = [DateTime]::UtcNow.AddMilliseconds(3500)
+    $recoveryPhase = 'initial'
+
+    # 阶段 1：首屏快速检查
     $snapshot = Get-ImaVisibleTitleSnapshot $root
     $matches = @($snapshot.Records | Where-Object { $_.Key -ceq $Record.Key })
-    if ($matches.Count -eq 0) {
+
+    # 阶段 2：检查离屏已加载集合并滚动定位，附带轮询等待目标就绪
+    if ($matches.Count -eq 0 -and [DateTime]::UtcNow -lt $deadline) {
+        $recoveryPhase = 'loaded-scroll'
         $list = Get-ImaTitleListElement $root
-        $loaded = @((Get-ImaGeneralTitleSnapshot $list -IncludeOffscreen).AllRecords | Where-Object { $_.Key -ceq $Record.Key })
-        if ($loaded.Count -eq 1) {
-            $scrollItem = $null
-            foreach ($element in @($loaded[0].Element, $loaded[0].Card)) {
-                if ($element.TryGetCurrentPattern([Windows.Automation.ScrollItemPattern]::Pattern, [ref]$scrollItem)) {
-                    ([Windows.Automation.ScrollItemPattern]$scrollItem).ScrollIntoView()
-                    Start-ImaCancelableSleep 150
-                    break
+        if ($list) {
+            $loaded = @((Get-ImaGeneralTitleSnapshot $list -IncludeOffscreen).AllRecords | Where-Object { $_.Key -ceq $Record.Key })
+            if ($loaded.Count -eq 1) {
+                $scrollItem = $null
+                foreach ($element in @($loaded[0].Element, $loaded[0].Card)) {
+                    if ($element) {
+                        $hasMethod = $element -is [Windows.Automation.AutomationElement] -or $null -ne $element.PSObject.Methods['TryGetCurrentPattern']
+                        if ($hasMethod -and $element.TryGetCurrentPattern([Windows.Automation.ScrollItemPattern]::Pattern, [ref]$scrollItem)) {
+                            if ($scrollItem -is [Windows.Automation.ScrollItemPattern]) {
+                                ([Windows.Automation.ScrollItemPattern]$scrollItem).ScrollIntoView()
+                            } else {
+                                $scrollItem.ScrollIntoView()
+                            }
+                            break
+                        }
+                    }
+                }
+                if (-not $scrollItem) {
+                    $scroller = Get-ImaTitleListScroller $root
+                    if ($scroller) {
+                        $view = [double]$scroller.Pattern.Current.VerticalViewSize
+                        if ($view -gt 0 -and $view -lt 100) {
+                            $bounds = $list.Current.BoundingRectangle
+                            $scrollExtent = $bounds.Height * (100 / $view - 1)
+                            $delta = ($loaded[0].Y - $bounds.Y - $bounds.Height * 0.2) / $scrollExtent * 100
+                            $position = [Math]::Max(0, [Math]::Min(100, $scroller.Pattern.Current.VerticalScrollPercent + $delta))
+                            Set-ImaTitleListScrollPercent $scroller $position
+                        }
+                    }
+                }
+                # 轮询等待目标在视口就绪（最长 800ms）
+                $waitLoadedUntil = [DateTime]::UtcNow.AddMilliseconds(800)
+                while ([DateTime]::UtcNow -lt $waitLoadedUntil -and [DateTime]::UtcNow -lt $deadline) {
+                    Test-ImaCancellation
+                    Start-ImaCancelableSleep 120
+                    $snapshot = Get-ImaVisibleTitleSnapshot (Get-ImaRoot)
+                    $matches = @($snapshot.Records | Where-Object { $_.Key -ceq $Record.Key })
+                    if ($matches.Count -ge 1) { break }
                 }
             }
-            if (-not $scrollItem) {
-                $scroller = Get-ImaTitleListScroller $root
-                if ($scroller) {
-                    $view = [double]$scroller.Pattern.Current.VerticalViewSize
-                    if ($view -gt 0 -and $view -lt 100) {
-                        $bounds = $list.Current.BoundingRectangle
-                        $scrollExtent = $bounds.Height * (100 / $view - 1)
-                        $delta = ($loaded[0].Y - $bounds.Y - $bounds.Height * 0.2) / $scrollExtent * 100
-                        $position = [Math]::Max(0, [Math]::Min(100, $scroller.Pattern.Current.VerticalScrollPercent + $delta))
-                        Set-ImaTitleListScrollPercent $scroller $position
+        }
+    }
+
+    # 阶段 3：回放扫描提示位置（ScrollPercent / ScrollStep），附带目标就绪轮询
+    if ($matches.Count -eq 0 -and [DateTime]::UtcNow -lt $deadline) {
+        $recoveryPhase = 'hint-playback'
+        $target = Get-ImaTitleListScroller $root
+        if ($target) {
+            if ($target.Pattern -or $target.RangePattern) {
+                Set-ImaTitleListScrollPercent $target $Record.ScrollPercent
+            }
+            else {
+                $distance = $Record.ScrollStep - $script:CurrentTitleScrollStep
+                $delta = if ($distance -gt 0) { -900 } else { 900 }
+                for ($step = 0; $step -lt [Math]::Abs($distance); $step++) {
+                    Test-ImaCancellation
+                    [void](Invoke-ImaTitleListMouseWheel $target $delta)
+                }
+            }
+            # 轮询等待回放后目标出现（最长 1000ms）
+            $waitHintUntil = [DateTime]::UtcNow.AddMilliseconds(1000)
+            while ([DateTime]::UtcNow -lt $waitHintUntil -and [DateTime]::UtcNow -lt $deadline) {
+                Test-ImaCancellation
+                Start-ImaCancelableSleep 150
+                $snapshot = Get-ImaVisibleTitleSnapshot (Get-ImaRoot)
+                $matches = @($snapshot.Records | Where-Object { $_.Key -ceq $Record.Key })
+                if ($matches.Count -ge 1) { break }
+            }
+        }
+    }
+
+    # 阶段 4：懒加载导致范围扩大比例失准后的有界几何微调补偿（最多恢复 1 次）
+    if ($matches.Count -eq 0 -and [DateTime]::UtcNow -lt $deadline) {
+        $recoveryPhase = 'extent-recovery'
+        $list = Get-ImaTitleListElement (Get-ImaRoot)
+        $scroller = Get-ImaTitleListScroller (Get-ImaRoot)
+        if ($list -and $scroller -and ($scroller.Pattern -or $scroller.RangePattern)) {
+            $loaded = @((Get-ImaGeneralTitleSnapshot $list -IncludeOffscreen).AllRecords | Where-Object { $_.Key -ceq $Record.Key })
+            if ($loaded.Count -eq 1) {
+                $bounds = $list.Current.BoundingRectangle
+                $view = [double]$scroller.Pattern.Current.VerticalViewSize
+                if ($view -gt 0 -and $view -lt 100) {
+                    $scrollExtent = $bounds.Height * (100 / $view - 1)
+                    $delta = ($loaded[0].Y - $bounds.Y - $bounds.Height * 0.2) / $scrollExtent * 100
+                    $position = [Math]::Max(0, [Math]::Min(100, $scroller.Pattern.Current.VerticalScrollPercent + $delta))
+                    Set-ImaTitleListScrollPercent $scroller $position
+                    $waitAdjustUntil = [DateTime]::UtcNow.AddMilliseconds(800)
+                    while ([DateTime]::UtcNow -lt $waitAdjustUntil -and [DateTime]::UtcNow -lt $deadline) {
+                        Test-ImaCancellation
                         Start-ImaCancelableSleep 150
+                        $snapshot = Get-ImaVisibleTitleSnapshot (Get-ImaRoot)
+                        $matches = @($snapshot.Records | Where-Object { $_.Key -ceq $Record.Key })
+                        if ($matches.Count -ge 1) { break }
                     }
                 }
             }
-            $snapshot = Get-ImaVisibleTitleSnapshot (Get-ImaRoot)
-            $matches = @($snapshot.Records | Where-Object { $_.Key -ceq $Record.Key })
         }
     }
+
+    # 阶段 5：终态严格核验与现场诊断
     if ($matches.Count -eq 0) {
-        $target = Get-ImaTitleListScroller $root
-        if (-not $target) { throw "目标文章已不在列表可见范围" }
-        if ($target.Pattern -or $target.RangePattern) { Set-ImaTitleListScrollPercent $target $Record.ScrollPercent }
-        else {
-            $distance = $Record.ScrollStep - $script:CurrentTitleScrollStep
-            $delta = if ($distance -gt 0) { -900 } else { 900 }
-            for ($step = 0; $step -lt [Math]::Abs($distance); $step++) {
-                [void](Invoke-ImaTitleListMouseWheel $target $delta)
-            }
+        $diagRoot = Get-ImaRoot
+        $diagList = if ($diagRoot) { Get-ImaTitleListElement $diagRoot } else { $null }
+        $diagScroller = if ($diagRoot) { Get-ImaTitleListScroller $diagRoot } else { $null }
+        $currentPct = if ($diagScroller -and $diagScroller.Pattern -and $diagScroller.Pattern.Current) { [Math]::Round([double]$diagScroller.Pattern.Current.VerticalScrollPercent, 1) } else { -1 }
+        $currentView = if ($diagScroller -and $diagScroller.Pattern -and $diagScroller.Pattern.Current) { [Math]::Round([double]$diagScroller.Pattern.Current.VerticalViewSize, 1) } else { -1 }
+        $diagLoaded = if ($diagList) {
+            $allSnap = Get-ImaGeneralTitleSnapshot $diagList -IncludeOffscreen
+            if ($allSnap -and $allSnap.AllRecords) {
+                @($allSnap.AllRecords | Where-Object { $_.Key -ceq $Record.Key })
+            } else { @() }
+        } else { @() }
+        $diagLoadedCount = @($diagLoaded).Count
+        $loadedStatus = if ($diagLoadedCount -gt 0 -and $diagLoaded[0].Element -and $diagLoaded[0].Element.Current) {
+            "已加载但位于视口外(Y=$([Math]::Round($diagLoaded[0].Y)), Offscreen=$($diagLoaded[0].Element.Current.IsOffscreen))"
+        } else {
+            "未在已加载树中发现"
         }
-        Start-ImaCancelableSleep 250
-        $snapshot = Get-ImaVisibleTitleSnapshot (Get-ImaRoot)
-        $matches = @($snapshot.Records | Where-Object { $_.Key -ceq $Record.Key })
+        Write-SyncLog "候选定位诊断 [$($Record.Name)]: 阶段=$recoveryPhase, 视口匹配=0, 离屏匹配=$diagLoadedCount, 状态=$loadedStatus, 当前滚动=$currentPct%(可见比$currentView%), 提示滚动=$($Record.ScrollPercent)%"
+        throw "文章条目已变化或来源 ID 不唯一，本轮不点击：$($Record.Name)"
     }
-    if ($matches.Count -ne 1) { throw "文章条目已变化或来源 ID 不唯一，本轮不点击：$($Record.Name)" }
+    if ($matches.Count -gt 1) {
+        Write-SyncLog "候选定位歧义 [$($Record.Name)]: 阶段=$recoveryPhase, 匹配到 $($matches.Count) 个相同 Key 的条目"
+        throw "文章条目来源 ID 存在歧义，本轮不点击：$($Record.Name)"
+    }
     # The card container's InvokePattern can be a silent no-op. Resolve the
     # nearest invokable title/ancestor, bounded by this exact identity's card.
     $pattern = $null
@@ -4314,7 +4677,8 @@ function Invoke-ImaArticleRecord([object]$Record) {
     $cardRuntimeId = $matches[0].Card.GetRuntimeId() -join '.'
     $walker = [Windows.Automation.TreeWalker]::RawViewWalker
     for ($level = 0; $level -lt 12 -and $candidate; $level++) {
-        if ($candidate.TryGetCurrentPattern([Windows.Automation.InvokePattern]::Pattern, [ref]$pattern)) { break }
+        $hasMethod = $candidate -is [Windows.Automation.AutomationElement] -or $null -ne $candidate.PSObject.Methods['TryGetCurrentPattern']
+        if ($hasMethod -and $candidate.TryGetCurrentPattern([Windows.Automation.InvokePattern]::Pattern, [ref]$pattern)) { break }
         if (($candidate.GetRuntimeId() -join '.') -ceq $cardRuntimeId) { break }
         $candidate = $walker.GetParent($candidate)
     }
@@ -4322,7 +4686,11 @@ function Invoke-ImaArticleRecord([object]$Record) {
     $script:CurrentTitleScrollStep = $Record.ScrollStep
     $invokedOk = $false
     try {
-        ([Windows.Automation.InvokePattern]$pattern).Invoke()
+        if ($pattern -is [Windows.Automation.InvokePattern]) {
+            ([Windows.Automation.InvokePattern]$pattern).Invoke()
+        } else {
+            $pattern.Invoke()
+        }
         $invokedOk = $true
     }
     catch {
@@ -4377,18 +4745,7 @@ function Invoke-ImaArticleRecord([object]$Record) {
         }
     }
     if ($Record.Kind -eq 'folder') {
-        Start-ImaCancelableSleep 200
-        if (-not (Test-ImaFolderSelected $Record.Name)) {
-            try {
-                $targetElement = if ($matches[0].Element) { $matches[0].Element } else { $matches[0].Card }
-                $rect = $targetElement.Current.BoundingRectangle
-                if ($rect.Width -gt 0 -and $rect.Height -gt 0 -and -not $targetElement.Current.IsOffscreen) {
-                    $cx = [int]($rect.X + $rect.Width / 2)
-                    $cy = [int]($rect.Y + $rect.Height / 2)
-                    Invoke-ImaNativeClick $cx $cy
-                }
-            } catch {}
-        }
+        # 文件夹卡片已通过 UIA 发起打开；导航确认与受控重试统一由 Wait-ImaFolderSelected 处理，不在 200ms 内盲目补发真实输入
         return
     }
     $script:CurrentArticleTitle = $Record.Name
@@ -5130,10 +5487,7 @@ function Invoke-ImaDirectDownloadOriginal([string]$Url, [string]$TargetPath, [st
 }
 
 function Save-ImaOriginalFile([object]$Record) {
-    $extension = [IO.Path]::GetExtension($Record.Name).ToLowerInvariant()
-    if ($extension -notin @('.pdf','.png','.jpg','.jpeg','.gif','.webp','.mp3','.wav','.m4a','.mp4','.webm','.ogg')) {
-        throw "尚未支持此原文件类型：$($Record.Kind)；未将预览或摘要当作原文件保存"
-    }
+    $extension = Get-ImaOriginalFileExtension $Record
     if (-not $script:DownloadDirectory -or -not [IO.Directory]::Exists($script:DownloadDirectory)) {
         throw '下载暂存目录不可用'
     }
@@ -5310,27 +5664,37 @@ function Invoke-ImaGeneralSync([Windows.Automation.AutomationElement]$Root) {
     # 快速内存预检：分离已存在跳过项与真正待同步新增项
     $pendingSync = New-Object Collections.Generic.List[object]
     foreach ($record in $records) {
-        if ($record.SourceId -and $script:SkipSourceIds.ContainsKey($record.SourceId)) {
-            $script:CompletedSkippedTitles.Add($record.Name)
-            Write-SyncLog "$($record.Name) 来源 ID 已同步，打开前跳过"
-            continue
+        try {
+            Test-ImaCancellation
+            if ($record.SourceId -and $script:SkipSourceIds.ContainsKey($record.SourceId)) {
+                $script:CompletedSkippedTitles.Add($record.Name)
+                Write-SyncLog "$($record.Name) 来源 ID 已同步，打开前跳过"
+                continue
+            }
+            $relativePath = Get-ImaLocalRelativePath $record
+            if ($script:ExistingFiles.ContainsKey($relativePath.ToLowerInvariant())) {
+                $script:CompletedSkippedTitles.Add($record.Name)
+                Write-SyncLog "$relativePath 同名文件已存在，打开前跳过"
+                continue
+            }
+            $pendingSync.Add($record)
         }
-        $relativePath = Get-ImaLocalRelativePath $record
-        if ($script:ExistingFiles.ContainsKey($relativePath.ToLowerInvariant())) {
-            $script:CompletedSkippedTitles.Add($record.Name)
-            Write-SyncLog "$relativePath 同名文件已存在，打开前跳过"
-            continue
+        catch [OperationCanceledException] { $canceled = $true; break }
+        catch {
+            $message = "文件名预检失败：$($_.Exception.Message)"
+            $script:CompletedErrors.Add([pscustomobject]@{ title = $record.Name; message = $message })
+            Write-SyncLog "$($record.Name) $message"
         }
-        $pendingSync.Add($record)
     }
 
-    if ($pendingSync.Count -eq 0) {
+    if ($pendingSync.Count -eq 0 -and -not $canceled -and $script:CompletedErrors.Count -eq 0) {
         Write-ImaProgress "所有研报均为最新，无待新增内容"
         Write-SyncLog "全部 $($records.Count) 篇研报本地均已同步，无需新增下载"
     }
 
     $syncIndex = 0
     foreach ($record in $pendingSync) {
+        if ($canceled) { break }
         $syncIndex++
         Write-ImaProgress "正在同步新增研报 ($syncIndex / $($pendingSync.Count))：$($record.Name)"
         $opened = $false

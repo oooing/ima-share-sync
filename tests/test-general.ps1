@@ -211,4 +211,147 @@ Check $true (Test-ImaGeneralBottom ([pscustomobject]@{Scrollable=$true;ScrollPer
     Check 2 $script:closedRecords 'each newly opened article is closed once'
 }
 
+& {
+    # 针对 Invoke-ImaArticleRecord 有界定位恢复与歧义拦截的离线回归测试
+    $script:invokedKeys = @()
+    $mockInvoke = [pscustomobject]@{}
+    $mockInvoke | Add-Member ScriptMethod Invoke { $script:invokedKeys += $script:currentCardKey }
+
+    function Make-MockArticleElement($Key, $Name) {
+        $elem = [pscustomobject]@{
+            Current = [pscustomobject]@{
+                Name = $Name
+                IsOffscreen = $false
+                BoundingRectangle = [pscustomobject]@{ X=10; Y=100; Width=300; Height=40 }
+            }
+        }
+        $elem | Add-Member NoteProperty TargetKey $Key
+        $elem | Add-Member ScriptMethod TryGetCurrentPattern {
+            param($PatternId, [ref]$PatternObj)
+            if ($PatternId -eq [Windows.Automation.InvokePattern]::Pattern) {
+                $script:currentCardKey = $this.TargetKey
+                $PatternObj.Value = $mockInvoke
+                return $true
+            }
+            return $false
+        }
+        $elem | Add-Member ScriptMethod GetRuntimeId { return @(10, 20, 30) }
+        $card = [pscustomobject]@{
+            Current = [pscustomobject]@{ AutomationId = "knowledge-note_$Key"; IsOffscreen = $false }
+        }
+        $card | Add-Member ScriptMethod GetRuntimeId { return @(10, 20, 30) }
+        $card | Add-Member ScriptMethod TryGetCurrentPattern { param($PatternId, [ref]$PatternObj) return $false }
+        return [pscustomobject]@{
+            Name = $Name; Key = $Key; SourceId = $Key; Kind = 'note'
+            Element = $elem; Card = $card
+            Y = 100.0; ScrollPercent = 0.0; ScrollStep = 0
+        }
+    }
+
+    $fakeRoot = [pscustomobject]@{
+        Current = [pscustomobject]@{ NativeWindowHandle = [IntPtr]1234; ProcessId = 5678 }
+    }
+    function Get-ImaRoot { return $fakeRoot }
+    function Get-ImaArticleWindowPresence { param($Name) return [pscustomobject]@{ State = 'Absent' } }
+    function Find-ImaArticleWindow { param($Name) return $null }
+    function Start-ImaCancelableSleep { param($Ms) }
+    function Test-ImaCancellation {}
+    function Set-ImaTitleListScrollPercent { param($Target, $Percent) $script:lastSetScroll = $Percent }
+
+    $mockScroller = [pscustomobject]@{
+        Pattern = [pscustomobject]@{
+            Current = [pscustomobject]@{ VerticalScrollPercent = 10.0; VerticalViewSize = 25.0 }
+        }
+        RangePattern = $null
+    }
+    function Get-ImaTitleListScroller { param($Root) return $mockScroller }
+    $mockList = [pscustomobject]@{
+        Current = [pscustomobject]@{
+            IsOffscreen = $false
+            BoundingRectangle = [pscustomobject]@{ X=0; Y=0; Width=400; Height=800 }
+        }
+    }
+    function Get-ImaTitleListElement { param($Root) return $mockList }
+
+    # 测试 1：首屏直接命中，无额外等待与滚动
+    $script:invokedKeys = @()
+    $mockRecord1 = Make-MockArticleElement 'key-1' '文章1'
+    function Get-ImaVisibleTitleSnapshot { param($Root) return [pscustomobject]@{ Records = @($mockRecord1) } }
+    Invoke-ImaArticleRecord ([pscustomobject]@{ Name='文章1'; Key='key-1'; Kind='note'; ScrollPercent=0; ScrollStep=0 })
+    Check 'key-1' ($script:invokedKeys -join ',') 'target visible on first screen opens directly'
+
+    # 测试 2：渲染延迟（轮询重试后就绪）
+    $script:invokedKeys = @()
+    $script:pollAttempt = 0
+    function Get-ImaVisibleTitleSnapshot {
+        param($Root)
+        $script:pollAttempt++
+        if ($script:pollAttempt -lt 2) { return [pscustomobject]@{ Records = @() } }
+        return [pscustomobject]@{ Records = @($mockRecord1) }
+    }
+    function Get-ImaGeneralTitleSnapshot { param($List, [switch]$IncludeOffscreen) return [pscustomobject]@{ AllRecords = @() } }
+    Invoke-ImaArticleRecord ([pscustomobject]@{ Name='文章1'; Key='key-1'; Kind='note'; ScrollPercent=25; ScrollStep=2 })
+    Check 'key-1' ($script:invokedKeys -join ',') 'delayed rendering is resolved within bounded polling loop'
+
+    # 测试 3：真正触发懒加载范围变化后的微调恢复（阶段 4），断言微调滚动计算与最终命中
+    $script:invokedKeys = @()
+    $script:lastSetScroll = -1
+    $script:stage4Triggered = $false
+    $offscreenCard = Make-MockArticleElement 'key-3' '失准文章'
+    $offscreenCard.Y = 900.0 # 位于视口下方
+
+    function Set-ImaTitleListScrollPercent {
+        param($Target, $Percent)
+        $script:lastSetScroll = $Percent
+        if ($Percent -ne 50) {
+            $script:stage4Triggered = $true
+        }
+    }
+
+    # 阶段 2 离屏快照为空；阶段 3 回放提示（lastSetScroll=50）后离屏树显现卡片供阶段 4 计算几何补偿
+    function Get-ImaGeneralTitleSnapshot {
+        param($List, [switch]$IncludeOffscreen)
+        if ($IncludeOffscreen -and $script:lastSetScroll -eq 50) {
+            return [pscustomobject]@{ AllRecords = @($offscreenCard) }
+        }
+        return [pscustomobject]@{ AllRecords = @() }
+    }
+
+    # 阶段 1 和阶段 3 视口快照均未命中；只有当阶段 4 真正触发微调几何滚动后，卡片才就绪
+    function Get-ImaVisibleTitleSnapshot {
+        param($Root)
+        if ($script:stage4Triggered) {
+            return [pscustomobject]@{ Records = @($offscreenCard) }
+        }
+        return [pscustomobject]@{ Records = @() }
+    }
+
+    Invoke-ImaArticleRecord ([pscustomobject]@{ Name='失准文章'; Key='key-3'; Kind='note'; ScrollPercent=50; ScrollStep=5 })
+    Check 'key-3' ($script:invokedKeys -join ',') 'extent recovery successfully recalculates offset and opens target'
+    Check $true $script:stage4Triggered 'stage 4 extent recovery actually recalculated and updated scroll percent'
+
+    # 测试 4：始终未就绪在时限内安全退出且不误点
+    function Get-ImaVisibleTitleSnapshot { param($Root) return [pscustomobject]@{ Records = @() } }
+    function Get-ImaGeneralTitleSnapshot { param($List, [switch]$IncludeOffscreen) return [pscustomobject]@{ AllRecords = @() } }
+    $errMsg = ''
+    try {
+        Invoke-ImaArticleRecord ([pscustomobject]@{ Name='丢失文章'; Key='key-lost'; Kind='note'; ScrollPercent=80; ScrollStep=8 })
+    } catch {
+        $errMsg = $_.Exception.Message
+    }
+    Check $true ($errMsg -like '*本轮不点击：丢失文章*') 'unresolved article terminates safely without click'
+
+    # 测试 5：身份出现歧义时拦截
+    $dup1 = Make-MockArticleElement 'key-dup' '歧义1'
+    $dup2 = Make-MockArticleElement 'key-dup' '歧义2'
+    function Get-ImaVisibleTitleSnapshot { param($Root) return [pscustomobject]@{ Records = @($dup1, $dup2) } }
+    $ambigMsg = ''
+    try {
+        Invoke-ImaArticleRecord ([pscustomobject]@{ Name='歧义1'; Key='key-dup'; Kind='note'; ScrollPercent=0; ScrollStep=0 })
+    } catch {
+        $ambigMsg = $_.Exception.Message
+    }
+    Check $true ($ambigMsg -like '*存在歧义*') 'ambiguous identity is strictly rejected'
+}
+
 Write-Output "PASS: $script:Checks general-text and low-interference assertions (no real desktop operations)"

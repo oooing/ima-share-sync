@@ -1,6 +1,6 @@
 {
   "name": "ima-share-sync",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "description": "Windows Obsidian plugin for syncing IMA articles and permitted original files, with local PDF-to-Markdown conversion.",
   "private": true,
   "license": "MIT",
@@ -11,7 +11,7 @@
     "typecheck": "tsc --noEmit",
     "test:js": "node tests/test-main.cjs && node tests/test-dashboard-stats.cjs",
     "test:pdf": "node tests/test-pdf-validation.mjs",
-    "test:ps": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/test-sync.ps1 && powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/test-general.ps1 && powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/test-general-folders.ps1 && powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/test-list-readiness.ps1 && powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/test-original-file-safety.ps1",
+    "test:ps": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/test-sync.ps1 && powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/test-general.ps1 && powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/test-general-folders.ps1 && powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/test-list-readiness.ps1 && powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/test-original-file-safety.ps1 && powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/test-file-title-paths.ps1",
     "test:card": "node tests/test-operation-card.cjs",
     "test": "npm run build && npm run test:js && npm run test:pdf && npm run test:markdown && npm run test:ps && npm run test:card",
     "verify:release": "node scripts/verify-release.mjs",

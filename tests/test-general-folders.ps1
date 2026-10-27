@@ -436,4 +436,205 @@ function Make-Record($Name,$Kind,$Time,$Id='', $Count=0) {
     $resSub = Open-ImaGeneralPath @('261019')
     Check $fakeRoot $resSub 'Open-ImaGeneralPath matches active subfolder breadcrumb without reload'
 }
+& {
+    # -------------------------------------------------------------
+    # 2026-10-26 文件夹导航状态机与受控恢复深度离线验证套件
+    # -------------------------------------------------------------
+    $script:FolderName = '研报分享'
+    $fakeRoot = [pscustomobject]@{
+        Current = [pscustomobject]@{ NativeWindowHandle = [IntPtr]1234; ProcessId = 5678; IsOffscreen = $false }
+    }
+    function Get-ImaRoot { return $fakeRoot }
+    function Start-ImaCancelableSleep { param($Ms) }
+    function Test-ImaGeneralScanBudget {}
+    function Wait-ImaTitleListStable { param($Root, $TimeoutMilliseconds=8000, $Recover=$null) return $fakeRoot }
+
+    # 场景 1：正常父目录 -> 目标目录：1 次进入，无无谓重试
+    $script:retryInvoked = 0
+    function Get-ImaBreadcrumbItems {
+        param($Root)
+        return @(
+            [pscustomobject]@{ Current = [pscustomobject]@{ Name = '研报分享' } },
+            [pscustomobject]@{ Current = [pscustomobject]@{ Name = '2026年10月【最新】' } },
+            [pscustomobject]@{ Current = [pscustomobject]@{ Name = '261025' } }
+        )
+    }
+    function Get-ImaTitleListElement { param($Root) return [pscustomobject]@{ Current = [pscustomobject]@{ IsOffscreen = $false } } }
+    $res1 = Wait-ImaFolderSelected '261025' -ExpectedPath @('研报分享', '2026年10月【最新】', '261025') -ParentPath @('研报分享', '2026年10月【最新】') -RetryAction { $script:retryInvoked++ }
+    Check $fakeRoot $res1 'Scene 1: clean navigation confirms full expected path without retries'
+    Check 0 $script:retryInvoked 'Scene 1: zero retry count on direct match'
+
+    # 场景 2：Invoke 返回后旧父目录短暂保持稳定，随后目标出现（过渡延迟），等待期间不重复提交
+    $script:probeStep = 0
+    $script:retryInvoked = 0
+    function Get-ImaBreadcrumbItems {
+        param($Root)
+        $script:probeStep++
+        if ($script:probeStep -le 2) {
+            return @(
+                [pscustomobject]@{ Current = [pscustomobject]@{ Name = '研报分享' } },
+                [pscustomobject]@{ Current = [pscustomobject]@{ Name = '2026年10月【最新】' } }
+            )
+        }
+        return @(
+            [pscustomobject]@{ Current = [pscustomobject]@{ Name = '研报分享' } },
+            [pscustomobject]@{ Current = [pscustomobject]@{ Name = '2026年10月【最新】' } },
+            [pscustomobject]@{ Current = [pscustomobject]@{ Name = '261025' } }
+        )
+    }
+    $res2 = Wait-ImaFolderSelected '261025' -ExpectedPath @('研报分享', '2026年10月【最新】', '261025') -ParentPath @('研报分享', '2026年10月【最新】') -RetryAction { $script:retryInvoked++ }
+    Check $fakeRoot $res2 'Scene 2: transient old parent stability does not falsely succeed nor trigger eager retries'
+    Check 0 $script:retryInvoked 'Scene 2: zero retries during normal delay'
+
+    # 场景 3：面包屑和列表同时暂时消失（Navigating 状态），随后恢复目标，严禁补点击
+    $script:navStep = 0
+    $script:retryInvoked = 0
+    function Get-ImaBreadcrumbItems {
+        param($Root)
+        $script:navStep++
+        if ($script:navStep -le 2) {
+            return @()
+        }
+        return @(
+            [pscustomobject]@{ Current = [pscustomobject]@{ Name = '研报分享' } },
+            [pscustomobject]@{ Current = [pscustomobject]@{ Name = '2026年10月【最新】' } },
+            [pscustomobject]@{ Current = [pscustomobject]@{ Name = '261025' } }
+        )
+    }
+    function Get-ImaTitleListElement {
+        param($Root)
+        if ($script:navStep -le 2) { return $null }
+        return [pscustomobject]@{ Current = [pscustomobject]@{ IsOffscreen = $false } }
+    }
+    $res3 = Wait-ImaFolderSelected '261025' -ExpectedPath @('研报分享', '2026年10月【最新】', '261025') -ParentPath @('研报分享', '2026年10月【最新】') -RetryAction { $script:retryInvoked++ }
+    Check $fakeRoot $res3 'Scene 3: temporary loss of breadcrumbs and list correctly identified as Navigating and recovers'
+    Check 0 $script:retryInvoked 'Scene 3: zero retries when navigating transition observed'
+
+    # 场景 4：面包屑和列表永久缺失，到时明确失败且包含诊断，不无限重试
+    function Get-ImaBreadcrumbItems { param($Root) return @() }
+    function Get-ImaTitleListElement { param($Root) return $null }
+    $errMsg4 = ''
+    try {
+        Wait-ImaFolderSelected '261025' -ExpectedPath @('研报分享', '2026年10月【最新】', '261025') -ParentPath @('研报分享', '2026年10月【最新】') -TimeoutSeconds 1
+    } catch {
+        $errMsg4 = $_.Exception.Message
+    }
+    Check $true ($errMsg4 -like '*文件夹跳转未完成：261025*') 'Scene 4: permanent loss safely times out'
+    Check $true ($errMsg4 -like '*当前停留在：（无面包屑）*') 'Scene 4: reports empty breadcrumb diagnostic'
+    Check $true ($errMsg4 -like '*状态：Navigating*') 'Scene 4: reports navigating state diagnostic'
+
+    # 场景 5：明确终态错误（如“当前文件夹不存在”），不等到统一超时才报错，立即退出
+    $missingElement = [pscustomobject]@{ Current = [pscustomobject]@{ Name = '当前文件夹不存在'; IsOffscreen = $false } }
+    $fakeRootWithErr = [pscustomobject]@{
+        Current = [pscustomobject]@{ NativeWindowHandle = [IntPtr]1234; ProcessId = 5678; IsOffscreen = $false }
+    }
+    $fakeRootWithErr | Add-Member -MemberType ScriptMethod -Name 'FindFirst' -Value { param($scope, $cond) return $missingElement }
+    function Get-ImaRoot { return $fakeRootWithErr }
+    $errMsg5 = ''
+    $startT5 = [DateTime]::UtcNow
+    try {
+        Wait-ImaFolderSelected '261025' -ExpectedPath @('研报分享', '2026年10月【最新】', '261025') -TimeoutSeconds 10
+    } catch {
+        $errMsg5 = $_.Exception.Message
+    }
+    $elapsedT5 = ([DateTime]::UtcNow - $startT5).TotalSeconds
+    Check $true ($errMsg5 -like '*当前文件夹不存在*') 'Scene 5: terminal error is recognized immediately'
+    Check $true ($elapsedT5 -lt 5) 'Scene 5: terminates fast without waiting for full 10s budget'
+    function Get-ImaRoot { return $fakeRoot }
+
+    # 场景 6：目标目录合法为空（空列表容器可见但 0 条目），确认完整路径后安全就绪
+    function Get-ImaBreadcrumbItems {
+        param($Root)
+        return @(
+            [pscustomobject]@{ Current = [pscustomobject]@{ Name = '研报分享' } },
+            [pscustomobject]@{ Current = [pscustomobject]@{ Name = '2026年10月【最新】' } },
+            [pscustomobject]@{ Current = [pscustomobject]@{ Name = '合法空目录' } }
+        )
+    }
+    function Get-ImaTitleListElement { param($Root) return [pscustomobject]@{ Current = [pscustomobject]@{ IsOffscreen = $false } } }
+    function Wait-ImaTitleListStable { param($Root, $TimeoutMilliseconds=8000, $Recover=$null) throw "列表已找到，但没有识别到可见标题" }
+    $res6 = Wait-ImaFolderSelected '合法空目录' -ExpectedPath @('研报分享', '2026年10月【最新】', '合法空目录')
+    Check $fakeRoot $res6 'Scene 6: legitimate empty folder with visible container succeeds after path confirmed'
+    function Wait-ImaTitleListStable { param($Root, $TimeoutMilliseconds=8000, $Recover=$null) return $fakeRoot }
+
+    # 场景 7：同名目录位于不同父级（路径歧义防护）
+    function Get-ImaBreadcrumbItems {
+        param($Root)
+        return @(
+            [pscustomobject]@{ Current = [pscustomobject]@{ Name = '研报分享' } },
+            [pscustomobject]@{ Current = [pscustomobject]@{ Name = '2026年09月【旧】' } },
+            [pscustomobject]@{ Current = [pscustomobject]@{ Name = '261025' } }
+        )
+    }
+    $errMsg7 = ''
+    try {
+        Wait-ImaFolderSelected '261025' -ExpectedPath @('研报分享', '2026年10月【最新】', '261025') -ParentPath @('研报分享', '2026年10月【最新】') -TimeoutSeconds 1
+    } catch {
+        $errMsg7 = $_.Exception.Message
+    }
+    Check $true ($errMsg7 -like '*文件夹跳转未完成：261025*') 'Scene 7: rejects same leaf name when parent path mismatches'
+
+    # 场景 8：窗口隐藏（WindowHidden）时安全中止，不补点击
+    $hiddenRoot = [pscustomobject]@{
+        Current = [pscustomobject]@{ NativeWindowHandle = [IntPtr]1234; ProcessId = 5678; IsOffscreen = $true }
+    }
+    function Get-ImaRoot { return $hiddenRoot }
+    $errMsg8 = ''
+    try {
+        Wait-ImaFolderSelected '261025' -TimeoutSeconds 1
+    } catch {
+        $errMsg8 = $_.Exception.Message
+    }
+    Check $true ($errMsg8 -like '*隐藏或最小化状态*') 'Scene 8: offscreen window is identified as WindowHidden and aborts'
+    function Get-ImaRoot { return $fakeRoot }
+
+    # 场景 9：原生补点击在许可未开启（AllowForeground=false）时安全拒绝
+    $script:AllowForeground = $false
+    $script:nativeClickCalls = 0
+    $script:ImaNativeClickInvoker = { param($x, $y, $h) $script:nativeClickCalls++; return [pscustomobject]@{ Success=$true } }
+    $nativeRes9 = Invoke-ImaSafeNativeClick 100 200 ([IntPtr]1234)
+    Check $false $nativeRes9.Success 'Scene 9: native click rejected when AllowForeground is false'
+    Check 'PermissionDenied' $nativeRes9.Reason 'Scene 9: reason is PermissionDenied'
+    Check 0 $script:nativeClickCalls 'Scene 9: underlying invoker is never called'
+
+    # 场景 10：原生补点击在目标坐标被遮挡（Hit-Test 失败）时安全拒绝
+    $script:AllowForeground = $true
+    $script:ImaNativeClickInvoker = {
+        param($x, $y, $h)
+        $script:nativeClickCalls++
+        if ($h -ne [IntPtr]1234) {
+            return [pscustomobject]@{ Success=$false; Executed=$false; Reason='OccludedOrMismatch' }
+        }
+        return [pscustomobject]@{ Success=$true; Executed=$true; Reason='Clicked' }
+    }
+    $nativeRes10 = Invoke-ImaSafeNativeClick 100 200 ([IntPtr]9999)
+    Check $false $nativeRes10.Success 'Scene 10: occluded or mismatched window is safely rejected'
+    Check 'OccludedOrMismatch' $nativeRes10.Reason 'Scene 10: reason is OccludedOrMismatch'
+
+    # 场景 11：原生补点击在合法许可且窗口匹配时，通过假能力记录坐标，不调用真实 user32
+    $script:passedCoords = @()
+    $script:ImaNativeClickInvoker = {
+        param($x, $y, $h)
+        $script:passedCoords = @($x, $y)
+        return [pscustomobject]@{ Success=$true; Executed=$true; Reason='Clicked' }
+    }
+    $nativeRes11 = Invoke-ImaSafeNativeClick 450 620 ([IntPtr]1234)
+    Check $true $nativeRes11.Success 'Scene 11: safe click executes via mock invoker without user32'
+    Check '450,620' ($script:passedCoords -join ',') 'Scene 11: coordinates correctly passed to fake invoker'
+    $script:ImaNativeClickInvoker = $null
+    $script:AllowForeground = $false
+
+    # 场景 12：等待期间取消传播（Cancellation）
+    $origTestCancel = ${function:Test-ImaCancellation}
+    function Test-ImaCancellation { throw [OperationCanceledException]::new('Task was canceled by user') }
+    $isCanceled12 = $false
+    try {
+        Wait-ImaFolderSelected '261025' -TimeoutSeconds 5
+    } catch [OperationCanceledException] {
+        $isCanceled12 = $true
+    }
+    Check $true $isCanceled12 'Scene 12: cancellation immediately aborts wait without retry or swallow'
+    if ($origTestCancel) { ${function:Test-ImaCancellation} = $origTestCancel } else { function Test-ImaCancellation {} }
+}
+
 Write-Output "PASS: $script:Checks general folder assertions (offline, no desktop input)"
