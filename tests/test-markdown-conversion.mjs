@@ -6,6 +6,7 @@ import { createRequire } from "node:module";
 import Module from "node:module";
 import { build } from "esbuild";
 import { bundleMarkdownRunner } from "../scripts/markdown-runner-build.mjs";
+import { embeddedWasmPlugin } from "../scripts/inspector-wasm-build.mjs";
 
 const require = createRequire(import.meta.url);
 const { PDFDocument, StandardFonts } = require("pdf-lib");
@@ -14,14 +15,21 @@ const module = new Module(path.resolve("tests/markdown-test.cjs"));
 module.filename = path.resolve("tests/markdown-test.cjs");
 module._compile(compiled.outputFiles[0].text, module.filename);
 const { runMarkdownConversion } = module.exports;
-const wasmPath = require.resolve("@firecrawl/pdf-inspector-wasm/pdf_inspector_wasm_bg.wasm");
+// Verify the compressed production asset restores the exact upstream WASM,
+// not only that one PDF fixture happens to convert.
+const wasmCompiled = await build({
+  stdin: { contents: 'module.exports = require("ima-inspector-wasm").default;', resolveDir: process.cwd() },
+  bundle: true, write: false, platform: "node", format: "cjs",
+  plugins: [embeddedWasmPlugin()],
+});
+const wasmModule = new Module(path.resolve("tests/wasm-roundtrip.cjs"));
+wasmModule.filename = path.resolve("tests/wasm-roundtrip.cjs");
+wasmModule._compile(wasmCompiled.outputFiles[0].text, wasmModule.filename);
+assert.deepEqual(Buffer.from(wasmModule.exports), await readFile(require.resolve("@firecrawl/pdf-inspector-wasm/pdf_inspector_wasm_bg.wasm")));
 const directCompiled = await build({
   entryPoints: ["src/pdf-markdown-core.ts"], bundle: true, write: false,
-  platform: "browser", format: "cjs", target: "es2022", external: ["fs", "path"],
-  plugins: [{ name: "test-embedded-wasm", setup(builder) {
-    builder.onResolve({ filter: /^ima-inspector-wasm$/ }, () => ({ path: wasmPath, namespace: "wasm" }));
-    builder.onLoad({ filter: /.*/, namespace: "wasm" }, async () => ({ contents: await readFile(wasmPath), loader: "binary" }));
-  } }],
+  platform: "browser", format: "cjs", target: "es2022", external: ["fs", "path", "zlib", "buffer"],
+  plugins: [embeddedWasmPlugin()],
 });
 const directModule = new Module(path.resolve("tests/markdown-direct-test.cjs"));
 directModule.filename = path.resolve("tests/markdown-direct-test.cjs");

@@ -2,21 +2,8 @@ import { watch as watchFiles } from "node:fs";
 import { copyFile, mkdir, readFile, rm } from "node:fs/promises";
 import process from "node:process";
 import * as esbuild from "esbuild";
-import { createRequire } from "node:module";
 import { pdfWorkerPlugin } from "./scripts/pdf-worker-build.mjs";
-import { markdownRunnerPlugin } from "./scripts/markdown-runner-build.mjs";
-
-function embeddedWasmPlugin() {
-  const require = createRequire(import.meta.url);
-  const wasm = require.resolve("@firecrawl/pdf-inspector-wasm/pdf_inspector_wasm_bg.wasm");
-  return {
-    name: "embedded-inspector-wasm",
-    setup(build) {
-      build.onResolve({ filter: /^ima-inspector-wasm$/ }, () => ({ path: wasm, namespace: "inspector-wasm" }));
-      build.onLoad({ filter: /.*/, namespace: "inspector-wasm" }, async () => ({ contents: await readFile(wasm), loader: "binary" }));
-    },
-  };
-}
+import { embeddedWasmPlugin } from "./scripts/inspector-wasm-build.mjs";
 
 const production = process.argv.includes("production");
 const watchMode = process.argv.includes("watch");
@@ -60,6 +47,8 @@ const options = {
     "os",
     "path",
     "worker_threads",
+    "zlib",
+    "buffer",
   ],
   format: "cjs",
   legalComments: "none",
@@ -72,7 +61,7 @@ const options = {
   platform: "browser",
   sourcemap: production ? false : "inline",
   target: "es2022",
-  plugins: [pdfWorkerPlugin(), markdownRunnerPlugin(), embeddedWasmPlugin()],
+  plugins: [pdfWorkerPlugin(), embeddedWasmPlugin()],
 };
 
 await rm("dist", { recursive: true, force: true });
@@ -90,4 +79,7 @@ if (watchMode) {
   });
 } else {
   await esbuild.build(options);
+  if (production && (await readFile("dist/main.js")).length > 5_000_000) {
+    throw new Error("main.js exceeds the 5 MB Community/Sync release budget");
+  }
 }

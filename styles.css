@@ -463,19 +463,16 @@ button.ima-share-sync-nav-entry:focus-visible {
 }
 
 /* 纯说明项（“数量规则”与“排序依据”）轻量化提示小条 */
-.ima-share-sync-advanced-content > .setting-item.ima-advanced-info-item,
-.ima-share-sync-advanced-content > .setting-item:not(:has(.setting-item-control)) {
+.ima-share-sync-advanced-content > .setting-item.ima-advanced-info-item {
   padding: 9px 18px !important;
   background: rgba(0, 0, 0, 0.04) !important;
 }
 
-.ima-share-sync-advanced-content > .setting-item.ima-advanced-info-item .setting-item-info,
-.ima-share-sync-advanced-content > .setting-item:not(:has(.setting-item-control)) .setting-item-info {
+.ima-share-sync-advanced-content > .setting-item.ima-advanced-info-item .setting-item-info {
   width: 100%;
 }
 
-.ima-share-sync-advanced-content > .setting-item.ima-advanced-info-item .setting-item-name,
-.ima-share-sync-advanced-content > .setting-item:not(:has(.setting-item-control)) .setting-item-name {
+.ima-share-sync-advanced-content > .setting-item.ima-advanced-info-item .setting-item-name {
   font-size: 12px;
   font-weight: 500;
   color: var(--text-muted);
@@ -484,8 +481,7 @@ button.ima-share-sync-nav-entry:focus-visible {
   gap: 6px;
 }
 
-.ima-share-sync-advanced-content > .setting-item.ima-advanced-info-item .setting-item-name::before,
-.ima-share-sync-advanced-content > .setting-item:not(:has(.setting-item-control)) .setting-item-name::before {
+.ima-share-sync-advanced-content > .setting-item.ima-advanced-info-item .setting-item-name::before {
   content: "ⓘ";
   font-size: 12px;
   font-weight: bold;
@@ -493,8 +489,7 @@ button.ima-share-sync-nav-entry:focus-visible {
   color: var(--text-accent, var(--interactive-accent));
 }
 
-.ima-share-sync-advanced-content > .setting-item.ima-advanced-info-item .setting-item-description,
-.ima-share-sync-advanced-content > .setting-item:not(:has(.setting-item-control)) .setting-item-description {
+.ima-share-sync-advanced-content > .setting-item.ima-advanced-info-item .setting-item-description {
   font-size: 11px;
   color: var(--text-faint);
   line-height: 1.45;

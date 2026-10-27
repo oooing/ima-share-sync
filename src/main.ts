@@ -27,7 +27,6 @@ import { IMA_SHARE_SYNC_ICON_ID, IMA_SHARE_SYNC_ICON_SVG } from "./icon";
 import { validatePdfStructure } from "./pdf-validation";
 import { runMarkdownConversion, type ConvertTask, type ConvertResultSummary } from "./pdf-to-markdown";
 import { processSinglePdf } from "./pdf-markdown-core";
-import markdownRunnerScript from "ima-markdown-runner";
 import { getStrings } from "./i18n";
 import { calculateDashboardStats, localDateKey, restoreMetrics, type SyncMetrics } from "./dashboard-stats";
 
@@ -3334,7 +3333,7 @@ export default class ImaSpeedSyncPlugin extends Plugin {
     try {
       const result = await runMarkdownConversion(
         tasks,
-        markdownRunnerScript,
+        "", // Desktop always supplies processSinglePdf; do not embed the unused Node test runner.
         (progress, total) => {
           const task = tasks[progress - 1];
           const rawTitle = task?.title?.trim() ?? "";
