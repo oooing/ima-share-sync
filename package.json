@@ -1,6 +1,6 @@
 {
   "name": "ima-share-sync",
-  "version": "0.3.4",
+  "version": "0.3.5",
   "description": "Windows Obsidian plugin for syncing IMA articles and permitted original files, with local PDF-to-Markdown conversion.",
   "private": true,
   "license": "MIT",

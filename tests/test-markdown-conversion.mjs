@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { mkdtemp, readFile, writeFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -6,7 +7,7 @@ import { createRequire } from "node:module";
 import Module from "node:module";
 import { build } from "esbuild";
 import { bundleMarkdownRunner } from "../scripts/markdown-runner-build.mjs";
-import { embeddedWasmPlugin } from "../scripts/inspector-wasm-build.mjs";
+import { compressWasm, embeddedWasmPlugin } from "../scripts/inspector-wasm-build.mjs";
 
 const require = createRequire(import.meta.url);
 const { PDFDocument, StandardFonts } = require("pdf-lib");
@@ -15,6 +16,12 @@ const module = new Module(path.resolve("tests/markdown-test.cjs"));
 module.filename = path.resolve("tests/markdown-test.cjs");
 module._compile(compiled.outputFiles[0].text, module.filename);
 const { runMarkdownConversion } = module.exports;
+// This same golden resource digest runs on Windows and Linux CI. It catches
+// platform/header or compressor changes that would break marketplace rebuilds.
+const upstreamWasm = await readFile(require.resolve("@firecrawl/pdf-inspector-wasm/pdf_inspector_wasm_bg.wasm"));
+assert.equal(createHash("sha256").update(compressWasm(upstreamWasm)).digest("hex"),
+  "62ec30572cc0c420e4f49d2104a76af563aa95c3a3339fc895c80e85fb742b8d",
+  "compressed pdf-inspector-wasm 1.25.2 must be identical across build platforms");
 // Verify the compressed production asset restores the exact upstream WASM,
 // not only that one PDF fixture happens to convert.
 const wasmCompiled = await build({

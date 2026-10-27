@@ -35,3 +35,11 @@
 - https://docs.obsidian.md/community-directory/faq
 - https://docs.obsidian.md/plugins/guides/migrate-declarative-settings
 - https://docs.github.com/en/actions/how-tos/secure-your-work/use-artifact-attestations/use-artifact-attestations
+
+## 0.3.4 重审结果与 0.3.5 后续修复
+
+0.3.4 审核从 Failed 恢复为 Completed，公开页 Add to Obsidian 已成为有效安装链接。体积超限、缺少附件来源证明、:has 三项提示消失。因此无需隐藏必要权限或重写设置页面来换取通过；此前具体内部失败点仍未公开，无法单独归因于某一项改动。
+
+但 0.3.4 出现新的构建复现 Warning。检查发现 Node gzip 在 Windows 的 header[9] 为 10，Unix 为 3；这是压缩数据携带的系统标记，不影响解压结果，却影响 main.js 摘要。0.3.5 将其规范化为 RFC 1952 的 255（unknown），保留压缩内容与校验和。Windows 与 Linux CI 同时检查固定版本 WASM 的压缩摘要，并执行真实 PDF 测试。是否完全消除市场构建差异以 0.3.5 重审为准。
+
+操作系统标记依据：https://docs.gtk.org/gio/property.ZlibCompressor.os.html

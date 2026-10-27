@@ -10,11 +10,11 @@
 
 <p><a href="https://obsidian.md/plugins?id=ima-speed-sync"><strong>社区页面 →</strong></a></p>
 
-<p><a href="https://github.com/oooing/ima-share-sync/blob/main/docs/GUIDE.zh-CN.md">手动安装</a> · <a href="https://github.com/oooing/ima-share-sync/releases/tag/0.3.4">下载文件</a></p>
+<p><a href="https://github.com/oooing/ima-share-sync/blob/main/docs/GUIDE.zh-CN.md">手动安装</a> · <a href="https://github.com/oooing/ima-share-sync/releases/tag/0.3.5">下载文件</a></p>
 
 <p><sub>Windows 10+ · Obsidian 1.11.4+ · 已安装并登录 IMA 电脑版</sub></p>
 
-<p>0.3.4 已发布。社区安装尚未开放，请先按指南手动安装。</p>
+<p>0.3.5 已发布。可通过社区插件页面安装，也可按指南手动安装。</p>
 
 <p><a href="#适合谁用">适合谁用</a> · <a href="#能做什么">能做什么</a></p>
 
