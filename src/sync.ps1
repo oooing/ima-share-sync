@@ -4527,6 +4527,65 @@ function Get-ImaLocalRelativePath([object]$Record) {
     return (@($parts) + @($name)) -join '/'
 }
 
+function Write-ImaArticleMatchDiagnostics([object]$Record, [object[]]$Candidates, [string]$Phase, [string]$Scope = 'visible') {
+    $index = 0
+    foreach ($matchRecord in @($Candidates)) {
+        $index++
+        try {
+            $detail = [ordered]@{ Phase = $Phase; Scope = $Scope; Index = $index; TargetKey = [string]$Record.Key }
+            foreach ($propertyName in @('Key', 'SourceId', 'AutomationId', 'Name', 'Kind')) {
+                $property = $matchRecord.PSObject.Properties[$propertyName]
+                $detail[$propertyName] = if ($property) { [string]$property.Value } else { $null }
+            }
+            foreach ($elementName in @('Card', 'Element')) {
+                $elementProperty = $matchRecord.PSObject.Properties[$elementName]
+                $element = if ($elementProperty) { $elementProperty.Value } else { $null }
+                $elementDetail = [ordered]@{ RuntimeId = $null; Bounds = $null; IsOffscreen = $null }
+                if ($element) {
+                    try { $elementDetail.RuntimeId = $element.GetRuntimeId() -join '.' }
+                    catch { $elementDetail.RuntimeIdError = $_.Exception.Message }
+                    try {
+                        $current = $element.Current
+                        foreach ($propertyName in @('Name', 'AutomationId', 'IsOffscreen')) {
+                            $property = $current.PSObject.Properties[$propertyName]
+                            if ($property) { $elementDetail[$propertyName] = $property.Value }
+                        }
+                        $boundsProperty = $current.PSObject.Properties['BoundingRectangle']
+                        if ($boundsProperty) {
+                            $bounds = $boundsProperty.Value
+                            $elementDetail.Bounds = [ordered]@{ X = $bounds.X; Y = $bounds.Y; Width = $bounds.Width; Height = $bounds.Height }
+                        }
+                    }
+                    catch { $elementDetail.CurrentError = $_.Exception.Message }
+                }
+                $detail[$elementName] = $elementDetail
+            }
+            Write-SyncLog ("候选身份详情：" + (ConvertTo-Json -InputObject $detail -Depth 6 -Compress))
+        }
+        catch {
+            # An expired UIA element must not make optional diagnostics change the result.
+            Write-SyncLog "候选身份详情读取失败 [$($Record.Name)]: 阶段=$Phase, 集合=$Scope, 序号=$index, $($_.Exception.Message)"
+        }
+    }
+}
+
+function Wait-ImaLoadedArticleMatchReady([object]$Record, [object]$Root, [object]$List, [object[]]$Candidates, [datetime]$Deadline, [string]$Phase) {
+    $loadedMatches = @($Candidates)
+    $waitUntil = [DateTime]::UtcNow.AddMilliseconds(600)
+    if ($loadedMatches.Count -gt 1) { Write-ImaArticleMatchDiagnostics $Record $loadedMatches $Phase 'loaded' }
+    while ($loadedMatches.Count -gt 1 -and [DateTime]::UtcNow -lt $waitUntil -and [DateTime]::UtcNow -lt $Deadline) {
+        Test-ImaCancellation
+        Start-ImaCancelableSleep 150
+        $Root = Get-ImaRoot
+        $List = Get-ImaTitleListElement $Root
+        $loadedMatches = @()
+        if ($List) {
+            $loadedMatches = @((Get-ImaGeneralTitleSnapshot $List -IncludeOffscreen).AllRecords | Where-Object { $_.Key -ceq $Record.Key })
+        }
+    }
+    return [pscustomobject]@{ Root = $Root; List = $List; Records = @($loadedMatches) }
+}
+
 function Invoke-ImaArticleRecord([object]$Record) {
     # A pre-existing same-title window cannot safely be attributed to this card.
     $presence = if ($Record.Kind -ne 'folder') { Get-ImaArticleWindowPresence $Record.Name } else { $null }
@@ -4540,6 +4599,17 @@ function Invoke-ImaArticleRecord([object]$Record) {
     # 阶段 1：首屏快速检查
     $snapshot = Get-ImaVisibleTitleSnapshot $root
     $matches = @($snapshot.Records | Where-Object { $_.Key -ceq $Record.Key })
+    if ($matches.Count -gt 1) {
+        Write-ImaArticleMatchDiagnostics $Record $matches $recoveryPhase 'visible'
+        # A refreshed list can briefly expose two representations. Re-read without
+        # choosing either; an absent target still enters the normal scroll recovery.
+        while ($matches.Count -gt 1 -and [DateTime]::UtcNow -lt $deadline) {
+            Test-ImaCancellation
+            Start-ImaCancelableSleep 150
+            $snapshot = Get-ImaVisibleTitleSnapshot (Get-ImaRoot)
+            $matches = @($snapshot.Records | Where-Object { $_.Key -ceq $Record.Key })
+        }
+    }
 
     # 阶段 2：检查离屏已加载集合并滚动定位，附带轮询等待目标就绪
     if ($matches.Count -eq 0 -and [DateTime]::UtcNow -lt $deadline) {
@@ -4547,6 +4617,12 @@ function Invoke-ImaArticleRecord([object]$Record) {
         $list = Get-ImaTitleListElement $root
         if ($list) {
             $loaded = @((Get-ImaGeneralTitleSnapshot $list -IncludeOffscreen).AllRecords | Where-Object { $_.Key -ceq $Record.Key })
+            if ($loaded.Count -gt 1) {
+                $loadedState = Wait-ImaLoadedArticleMatchReady $Record $root $list $loaded $deadline $recoveryPhase
+                $root = $loadedState.Root
+                $list = $loadedState.List
+                $loaded = @($loadedState.Records)
+            }
             if ($loaded.Count -eq 1) {
                 $scrollItem = $null
                 foreach ($element in @($loaded[0].Element, $loaded[0].Card)) {
@@ -4582,7 +4658,8 @@ function Invoke-ImaArticleRecord([object]$Record) {
                     Start-ImaCancelableSleep 120
                     $snapshot = Get-ImaVisibleTitleSnapshot (Get-ImaRoot)
                     $matches = @($snapshot.Records | Where-Object { $_.Key -ceq $Record.Key })
-                    if ($matches.Count -ge 1) { break }
+                    if ($matches.Count -eq 1) { break }
+                    if ($matches.Count -gt 1) { Write-ImaArticleMatchDiagnostics $Record $matches $recoveryPhase 'visible' }
                 }
             }
         }
@@ -4611,36 +4688,71 @@ function Invoke-ImaArticleRecord([object]$Record) {
                 Start-ImaCancelableSleep 150
                 $snapshot = Get-ImaVisibleTitleSnapshot (Get-ImaRoot)
                 $matches = @($snapshot.Records | Where-Object { $_.Key -ceq $Record.Key })
-                if ($matches.Count -ge 1) { break }
+                if ($matches.Count -eq 1) { break }
+                if ($matches.Count -gt 1) { Write-ImaArticleMatchDiagnostics $Record $matches $recoveryPhase 'visible' }
             }
         }
     }
 
-    # 阶段 4：懒加载导致范围扩大比例失准后的有界几何微调补偿（最多恢复 1 次）
+    # 阶段 4：大幅跳转后目标可能尚未加载；在剩余预算内等待新范围，最多几何补偿 1 次。
     if ($matches.Count -eq 0 -and [DateTime]::UtcNow -lt $deadline) {
         $recoveryPhase = 'extent-recovery'
-        $list = Get-ImaTitleListElement (Get-ImaRoot)
-        $scroller = Get-ImaTitleListScroller (Get-ImaRoot)
-        if ($list -and $scroller -and ($scroller.Pattern -or $scroller.RangePattern)) {
-            $loaded = @((Get-ImaGeneralTitleSnapshot $list -IncludeOffscreen).AllRecords | Where-Object { $_.Key -ceq $Record.Key })
-            if ($loaded.Count -eq 1) {
+        $extentAdjusted = $false
+        while ($matches.Count -ne 1 -and [DateTime]::UtcNow -lt $deadline) {
+            Test-ImaCancellation
+            $root = Get-ImaRoot
+            $list = Get-ImaTitleListElement $root
+            $scroller = Get-ImaTitleListScroller $root
+            $snapshot = Get-ImaVisibleTitleSnapshot $root
+            $matches = @($snapshot.Records | Where-Object { $_.Key -ceq $Record.Key })
+            if ($matches.Count -eq 1) { break }
+            if ($matches.Count -gt 1) { Write-ImaArticleMatchDiagnostics $Record $matches $recoveryPhase 'visible' }
+            $loaded = @()
+            if ($list) {
+                $loaded = @((Get-ImaGeneralTitleSnapshot $list -IncludeOffscreen).AllRecords | Where-Object { $_.Key -ceq $Record.Key })
+            }
+            if ($loaded.Count -gt 1) { Write-ImaArticleMatchDiagnostics $Record $loaded $recoveryPhase 'loaded' }
+            if (-not $extentAdjusted -and $matches.Count -eq 0 -and $loaded.Count -eq 1 -and [DateTime]::UtcNow -lt $deadline) {
+                # Loading this card can expand the list while its snapshot is read.
+                # Reacquire the provider after that read before computing geometry.
+                $root = Get-ImaRoot
+                $list = Get-ImaTitleListElement $root
+                $scroller = Get-ImaTitleListScroller $root
+            }
+            if (-not $extentAdjusted -and $matches.Count -eq 0 -and $loaded.Count -eq 1 -and $list -and $scroller -and $scroller.Pattern -and [DateTime]::UtcNow -lt $deadline) {
                 $bounds = $list.Current.BoundingRectangle
                 $view = [double]$scroller.Pattern.Current.VerticalViewSize
                 if ($view -gt 0 -and $view -lt 100) {
                     $scrollExtent = $bounds.Height * (100 / $view - 1)
                     $delta = ($loaded[0].Y - $bounds.Y - $bounds.Height * 0.2) / $scrollExtent * 100
                     $position = [Math]::Max(0, [Math]::Min(100, $scroller.Pattern.Current.VerticalScrollPercent + $delta))
+                    Write-SyncLog "候选范围恢复 [$($Record.Name)]: 当前滚动=$($scroller.Pattern.Current.VerticalScrollPercent)%, 可见比=$view%, 目标Y=$($loaded[0].Y), 调整滚动=$position%"
                     Set-ImaTitleListScrollPercent $scroller $position
+                    $extentAdjusted = $true
                     $waitAdjustUntil = [DateTime]::UtcNow.AddMilliseconds(800)
                     while ([DateTime]::UtcNow -lt $waitAdjustUntil -and [DateTime]::UtcNow -lt $deadline) {
                         Test-ImaCancellation
                         Start-ImaCancelableSleep 150
                         $snapshot = Get-ImaVisibleTitleSnapshot (Get-ImaRoot)
                         $matches = @($snapshot.Records | Where-Object { $_.Key -ceq $Record.Key })
-                        if ($matches.Count -ge 1) { break }
+                        if ($matches.Count -eq 1) { break }
+                        if ($matches.Count -gt 1) { Write-ImaArticleMatchDiagnostics $Record $matches $recoveryPhase 'visible' }
                     }
                 }
             }
+            if ($matches.Count -ne 1 -and [DateTime]::UtcNow -lt $deadline) { Start-ImaCancelableSleep 150 }
+        }
+    }
+
+    # A duplicate observed near the end of a scroll poll still gets the remaining
+    # shared budget to settle; never select the first candidate or match by title.
+    if ($matches.Count -gt 1 -and [DateTime]::UtcNow -lt $deadline) {
+        Write-ImaArticleMatchDiagnostics $Record $matches $recoveryPhase 'visible'
+        while ($matches.Count -ne 1 -and [DateTime]::UtcNow -lt $deadline) {
+            Test-ImaCancellation
+            Start-ImaCancelableSleep 150
+            $snapshot = Get-ImaVisibleTitleSnapshot (Get-ImaRoot)
+            $matches = @($snapshot.Records | Where-Object { $_.Key -ceq $Record.Key })
         }
     }
 
@@ -4659,17 +4771,20 @@ function Invoke-ImaArticleRecord([object]$Record) {
         } else { @() }
         $diagLoadedCount = @($diagLoaded).Count
         $loadedStatus = if ($diagLoadedCount -gt 0 -and $diagLoaded[0].Element -and $diagLoaded[0].Element.Current) {
-            "已加载但位于视口外(Y=$([Math]::Round($diagLoaded[0].Y)), Offscreen=$($diagLoaded[0].Element.Current.IsOffscreen))"
+            "首个已加载匹配(Y=$([Math]::Round($diagLoaded[0].Y)), Offscreen=$($diagLoaded[0].Element.Current.IsOffscreen))"
         } else {
             "未在已加载树中发现"
         }
-        Write-SyncLog "候选定位诊断 [$($Record.Name)]: 阶段=$recoveryPhase, 视口匹配=0, 离屏匹配=$diagLoadedCount, 状态=$loadedStatus, 当前滚动=$currentPct%(可见比$currentView%), 提示滚动=$($Record.ScrollPercent)%"
+        if ($diagLoadedCount -gt 1) { Write-ImaArticleMatchDiagnostics $Record $diagLoaded $recoveryPhase 'loaded' }
+        Write-SyncLog "候选定位诊断 [$($Record.Name)]: 阶段=$recoveryPhase, 视口匹配=0, 已加载匹配=$diagLoadedCount, 状态=$loadedStatus, 当前滚动=$currentPct%(可见比$currentView%), 提示滚动=$($Record.ScrollPercent)%"
         throw "文章条目已变化或来源 ID 不唯一，本轮不点击：$($Record.Name)"
     }
     if ($matches.Count -gt 1) {
+        Write-ImaArticleMatchDiagnostics $Record $matches $recoveryPhase 'visible'
         Write-SyncLog "候选定位歧义 [$($Record.Name)]: 阶段=$recoveryPhase, 匹配到 $($matches.Count) 个相同 Key 的条目"
         throw "文章条目来源 ID 存在歧义，本轮不点击：$($Record.Name)"
     }
+    Write-ImaArticleMatchDiagnostics $Record $matches 'verified' 'visible'
     # The card container's InvokePattern can be a silent no-op. Resolve the
     # nearest invokable title/ancestor, bounded by this exact identity's card.
     $pattern = $null

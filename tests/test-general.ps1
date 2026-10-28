@@ -215,9 +215,13 @@ Check $true (Test-ImaGeneralBottom ([pscustomobject]@{Scrollable=$true;ScrollPer
     # 针对 Invoke-ImaArticleRecord 有界定位恢复与歧义拦截的离线回归测试
     $script:invokedKeys = @()
     $mockInvoke = [pscustomobject]@{}
-    $mockInvoke | Add-Member ScriptMethod Invoke { $script:invokedKeys += $script:currentCardKey }
+    $mockInvoke | Add-Member ScriptMethod Invoke {
+        $script:invokedKeys += $script:currentCardKey
+        $script:invokedRuntimeIds += $script:currentRuntimeId
+    }
+    $script:invokedRuntimeIds = @()
 
-    function Make-MockArticleElement($Key, $Name) {
+    function Make-MockArticleElement($Key, $Name, $RuntimeId = 30) {
         $elem = [pscustomobject]@{
             Current = [pscustomobject]@{
                 Name = $Name
@@ -226,23 +230,29 @@ Check $true (Test-ImaGeneralBottom ([pscustomobject]@{Scrollable=$true;ScrollPer
             }
         }
         $elem | Add-Member NoteProperty TargetKey $Key
+        $elem | Add-Member NoteProperty RuntimeId $RuntimeId
         $elem | Add-Member ScriptMethod TryGetCurrentPattern {
             param($PatternId, [ref]$PatternObj)
             if ($PatternId -eq [Windows.Automation.InvokePattern]::Pattern) {
                 $script:currentCardKey = $this.TargetKey
+                $script:currentRuntimeId = $this.RuntimeId
                 $PatternObj.Value = $mockInvoke
                 return $true
             }
             return $false
         }
-        $elem | Add-Member ScriptMethod GetRuntimeId { return @(10, 20, 30) }
+        $elem | Add-Member ScriptMethod GetRuntimeId { return @(10, 20, $this.RuntimeId) }
         $card = [pscustomobject]@{
-            Current = [pscustomobject]@{ AutomationId = "knowledge-note_$Key"; IsOffscreen = $false }
+            Current = [pscustomobject]@{
+                AutomationId = "knowledge-note_$Key"; IsOffscreen = $false
+                BoundingRectangle = [pscustomobject]@{ X=10; Y=100; Width=300; Height=40 }
+            }
+            RuntimeId = $RuntimeId
         }
-        $card | Add-Member ScriptMethod GetRuntimeId { return @(10, 20, 30) }
+        $card | Add-Member ScriptMethod GetRuntimeId { return @(10, 20, $this.RuntimeId) }
         $card | Add-Member ScriptMethod TryGetCurrentPattern { param($PatternId, [ref]$PatternObj) return $false }
         return [pscustomobject]@{
-            Name = $Name; Key = $Key; SourceId = $Key; Kind = 'note'
+            Name = $Name; Key = $Key; SourceId = $Key; Kind = 'note'; AutomationId = "knowledge-note_$Key"
             Element = $elem; Card = $card
             Y = 100.0; ScrollPercent = 0.0; ScrollStep = 0
         }
@@ -254,7 +264,8 @@ Check $true (Test-ImaGeneralBottom ([pscustomobject]@{Scrollable=$true;ScrollPer
     function Get-ImaRoot { return $fakeRoot }
     function Get-ImaArticleWindowPresence { param($Name) return [pscustomobject]@{ State = 'Absent' } }
     function Find-ImaArticleWindow { param($Name) return $null }
-    function Start-ImaCancelableSleep { param($Ms) }
+    $script:locateSleepCount = 0
+    function Start-ImaCancelableSleep { param($Ms) $script:locateSleepCount++ }
     function Test-ImaCancellation {}
     function Set-ImaTitleListScrollPercent { param($Target, $Percent) $script:lastSetScroll = $Percent }
 
@@ -275,10 +286,14 @@ Check $true (Test-ImaGeneralBottom ([pscustomobject]@{Scrollable=$true;ScrollPer
 
     # 测试 1：首屏直接命中，无额外等待与滚动
     $script:invokedKeys = @()
+    $script:lastSetScroll = -1
     $mockRecord1 = Make-MockArticleElement 'key-1' '文章1'
     function Get-ImaVisibleTitleSnapshot { param($Root) return [pscustomobject]@{ Records = @($mockRecord1) } }
     Invoke-ImaArticleRecord ([pscustomobject]@{ Name='文章1'; Key='key-1'; Kind='note'; ScrollPercent=0; ScrollStep=0 })
     Check 'key-1' ($script:invokedKeys -join ',') 'target visible on first screen opens directly'
+    Check 1 $script:invokedKeys.Count 'unique first-screen target invokes exactly once'
+    Check 0 $script:locateSleepCount 'unique first-screen target does not add a readiness delay'
+    Check -1 $script:lastSetScroll 'unique first-screen target does not scroll'
 
     # 测试 2：渲染延迟（轮询重试后就绪）
     $script:invokedKeys = @()
@@ -352,6 +367,206 @@ Check $true (Test-ImaGeneralBottom ([pscustomobject]@{Scrollable=$true;ScrollPer
         $ambigMsg = $_.Exception.Message
     }
     Check $true ($ambigMsg -like '*存在歧义*') 'ambiguous identity is strictly rejected'
+
+    # A duplicate source identity must settle before any physical element is invoked.
+    $mockTargetCard = Make-MockArticleElement 'key-transient' 'same title' 101
+    $duplicate = Make-MockArticleElement 'key-transient' 'same title' 202
+    $requested = [pscustomobject]@{ Name='same title'; Key='key-transient'; Kind='note'; ScrollPercent=35; ScrollStep=1 }
+    $script:invokedKeys = @(); $script:invokedRuntimeIds = @(); $script:visibleReads = 0
+    function Get-ImaVisibleTitleSnapshot {
+        param($Root)
+        $script:visibleReads++
+        if ($script:visibleReads -le 2) { return [pscustomobject]@{ Records=@($mockTargetCard, $duplicate) } }
+        return [pscustomobject]@{ Records=@($mockTargetCard) }
+    }
+    Invoke-ImaArticleRecord $requested
+    Check 1 $script:invokedKeys.Count 'initial transient duplicate invokes exactly once'
+    Check 'key-transient' $script:invokedKeys[0] 'initial transient duplicate preserves source identity'
+    Check 101 $script:invokedRuntimeIds[0] 'initial transient duplicate invokes the surviving physical element'
+    Check $true ($script:visibleReads -ge 3) 'initial duplicate waits until a unique snapshot'
+
+    # The loaded-scroll polling path must not stop on its first two-match frame.
+    $script:invokedKeys = @(); $script:invokedRuntimeIds = @(); $script:visibleReads = 0
+    $script:loadedReads = 0; $script:lastSetScroll = -1
+    function Set-ImaTitleListScrollPercent { param($Target, $Percent) $script:lastSetScroll = $Percent }
+    function Get-ImaGeneralTitleSnapshot {
+        param($List, [switch]$IncludeOffscreen)
+        $script:loadedReads++
+        return [pscustomobject]@{ AllRecords=@($mockTargetCard) }
+    }
+    function Get-ImaVisibleTitleSnapshot {
+        param($Root)
+        $script:visibleReads++
+        if ($script:visibleReads -eq 1) { return [pscustomobject]@{ Records=@() } }
+        if ($script:visibleReads -eq 2) { return [pscustomobject]@{ Records=@($mockTargetCard, $duplicate) } }
+        return [pscustomobject]@{ Records=@($mockTargetCard) }
+    }
+    Invoke-ImaArticleRecord $requested
+    Check 1 $script:invokedKeys.Count 'loaded-scroll transient duplicate invokes exactly once'
+    Check 'key-transient' $script:invokedKeys[0] 'loaded-scroll transient duplicate preserves source identity'
+    Check 101 $script:invokedRuntimeIds[0] 'loaded-scroll transient duplicate invokes only the surviving element'
+    Check $true ($script:loadedReads -ge 1 -and $script:lastSetScroll -ne 35) 'loaded-scroll case uses loaded geometry instead of the saved hint'
+
+    # If no loaded card is available, hint playback must also survive 0 -> 2 -> 1.
+    $script:invokedKeys = @(); $script:invokedRuntimeIds = @(); $script:visibleReads = 0
+    $script:lastSetScroll = -1
+    function Get-ImaGeneralTitleSnapshot { param($List, [switch]$IncludeOffscreen) return [pscustomobject]@{ AllRecords=@() } }
+    Invoke-ImaArticleRecord $requested
+    Check 1 $script:invokedKeys.Count 'hint playback transient duplicate invokes exactly once'
+    Check 'key-transient' $script:invokedKeys[0] 'hint playback transient duplicate preserves source identity'
+    Check 101 $script:invokedRuntimeIds[0] 'hint playback transient duplicate invokes only the surviving element'
+    Check 35 $script:lastSetScroll 'hint playback case actually uses the saved scroll hint'
+
+    # Loaded duplicates must settle before their geometry is used to scroll.
+    $script:invokedKeys = @(); $script:invokedRuntimeIds = @()
+    $script:loadedReads = 0; $script:lastSetScroll = -1; $script:loadedRecoveredScroll = $false
+    function Get-ImaGeneralTitleSnapshot {
+        param($List, [switch]$IncludeOffscreen)
+        $script:loadedReads++
+        if ($script:loadedReads -le 2) { return [pscustomobject]@{ AllRecords=@($mockTargetCard, $duplicate) } }
+        return [pscustomobject]@{ AllRecords=@($mockTargetCard) }
+    }
+    function Set-ImaTitleListScrollPercent {
+        param($Target, $Percent)
+        $script:lastSetScroll = $Percent
+        if ($script:loadedReads -ge 3 -and $Percent -ne 35) { $script:loadedRecoveredScroll = $true }
+    }
+    function Get-ImaVisibleTitleSnapshot {
+        param($Root)
+        if ($script:loadedRecoveredScroll) { return [pscustomobject]@{ Records=@($mockTargetCard) } }
+        return [pscustomobject]@{ Records=@() }
+    }
+    Invoke-ImaArticleRecord $requested
+    Check 1 $script:invokedKeys.Count 'loaded duplicate settling invokes exactly once'
+    Check 'key-transient' $script:invokedKeys[0] 'loaded duplicate settling preserves target identity'
+    Check 101 $script:invokedRuntimeIds[0] 'loaded duplicate settling invokes the surviving physical card'
+    Check $true ($script:loadedReads -ge 3 -and $script:loadedRecoveredScroll) 'loaded duplicates settle before target geometry scrolls'
+
+    # If duplicates first appear after hint playback, extent recovery must also wait.
+    $script:invokedKeys = @(); $script:invokedRuntimeIds = @()
+    $script:extentLoadedReads = 0; $script:lastSetScroll = -1; $script:extentRecoveredScroll = $false
+    function Get-ImaGeneralTitleSnapshot {
+        param($List, [switch]$IncludeOffscreen)
+        if ($script:lastSetScroll -ne 35) { return [pscustomobject]@{ AllRecords=@() } }
+        $script:extentLoadedReads++
+        if ($script:extentLoadedReads -le 2) { return [pscustomobject]@{ AllRecords=@($mockTargetCard, $duplicate) } }
+        return [pscustomobject]@{ AllRecords=@($mockTargetCard) }
+    }
+    function Set-ImaTitleListScrollPercent {
+        param($Target, $Percent)
+        $script:lastSetScroll = $Percent
+        if ($script:extentLoadedReads -ge 3 -and $Percent -ne 35) { $script:extentRecoveredScroll = $true }
+    }
+    function Get-ImaVisibleTitleSnapshot {
+        param($Root)
+        if ($script:extentRecoveredScroll) { return [pscustomobject]@{ Records=@($mockTargetCard) } }
+        return [pscustomobject]@{ Records=@() }
+    }
+    Invoke-ImaArticleRecord $requested
+    Check 1 $script:invokedKeys.Count 'extent loaded duplicate settling invokes exactly once'
+    Check 'key-transient' $script:invokedKeys[0] 'extent loaded duplicate settling preserves target identity'
+    Check 101 $script:invokedRuntimeIds[0] 'extent loaded duplicate settling invokes the surviving physical card'
+    Check $true ($script:extentLoadedReads -ge 3 -and $script:extentRecoveredScroll) 'extent recovery waits for unique loaded geometry'
+
+    # Real Nexchip trace: the bottom jump first has no loaded target, then the
+    # content extent grows and the target arrives offscreen. Waiting alone never
+    # makes it visible: exactly one correction using the fresh extent is needed.
+    $mockLateCard = Make-MockArticleElement 'key-late' 'late target' 401
+    $mockLateCard.Y = 900.0
+    $mockLateDecoy = Make-MockArticleElement 'key-late-decoy' 'late target' 402
+    $lateRequested = [pscustomobject]@{ Name='late target'; Key='key-late'; Kind='note'; ScrollPercent=100; ScrollStep=1 }
+    $script:invokedKeys = @(); $script:invokedRuntimeIds = @()
+    $script:lateScrolls = @(); $script:lateLoadedReads = 0; $script:lateVisibleReadsAfterAdjust = 0
+    $script:lateScrollViews = @(); $script:lateScrollOffsets = @()
+    $mockScroller.Pattern.Current.VerticalViewSize = 26.76
+    $mockScroller.Pattern.Current.VerticalScrollPercent = 100.0
+    function Get-ImaTitleListScroller {
+        param($Root)
+        return [pscustomobject]@{
+            Pattern=[pscustomobject]@{ Current=[pscustomobject]@{
+                VerticalViewSize=$mockScroller.Pattern.Current.VerticalViewSize
+                VerticalScrollPercent=$mockScroller.Pattern.Current.VerticalScrollPercent
+            } }
+            RangePattern=$null
+        }
+    }
+    function Get-ImaGeneralTitleSnapshot {
+        param($List, [switch]$IncludeOffscreen)
+        if ($script:lateScrolls.Count -eq 0) { return [pscustomobject]@{ AllRecords=@() } }
+        $script:lateLoadedReads++
+        if ($script:lateLoadedReads -lt 3) { return [pscustomobject]@{ AllRecords=@() } }
+        $mockScroller.Pattern.Current.VerticalViewSize = 24.8
+        $mockScroller.Pattern.Current.VerticalScrollPercent = 88.97
+        return [pscustomobject]@{ AllRecords=@($mockLateCard) }
+    }
+    function Set-ImaTitleListScrollPercent {
+        param($Target, $Percent)
+        $script:lateScrolls += [double]$Percent
+        $script:lateScrollViews += [double]$Target.Pattern.Current.VerticalViewSize
+        $script:lateScrollOffsets += [double]$Target.Pattern.Current.VerticalScrollPercent
+    }
+    function Get-ImaVisibleTitleSnapshot {
+        param($Root)
+        if ($script:lateScrolls.Count -ge 2) {
+            $script:lateVisibleReadsAfterAdjust++
+            if ($script:lateVisibleReadsAfterAdjust -ge 3) {
+                return [pscustomobject]@{ Records=@($mockLateDecoy, $mockLateCard) }
+            }
+        }
+        return [pscustomobject]@{ Records=@($mockLateDecoy) }
+    }
+    Invoke-ImaArticleRecord $lateRequested
+    Check 1 $script:invokedKeys.Count 'late-loaded extent recovery invokes exactly once'
+    Check 'key-late' $script:invokedKeys[0] 'late-loaded extent recovery keeps strict source identity'
+    Check 401 $script:invokedRuntimeIds[0] 'late-loaded extent recovery never invokes the same-title decoy'
+    Check $true ($script:lateLoadedReads -ge 3) 'extent recovery waits through missing loaded frames'
+    Check 2 $script:lateScrolls.Count 'late-loaded recovery uses one hint and at most one geometry correction'
+    Check 100 $script:lateScrolls[1] 'late-loaded geometry correction uses the expanded current range'
+    Check 24.8 $script:lateScrollViews[1] 'geometry correction reacquires the expanded view size after target arrival'
+    Check 88.97 $script:lateScrollOffsets[1] 'geometry correction reacquires the actual offset after target arrival'
+    Check $true ($script:lateVisibleReadsAfterAdjust -ge 3) 'post-adjustment readiness does not trigger repeated corrections'
+    $mockScroller.Pattern.Current.VerticalViewSize = 25.0
+    $mockScroller.Pattern.Current.VerticalScrollPercent = 10.0
+    function Get-ImaTitleListScroller { param($Root) return $mockScroller }
+    function Set-ImaTitleListScrollPercent { param($Target, $Percent) $script:lastSetScroll = $Percent }
+    function Get-ImaGeneralTitleSnapshot { param($List, [switch]$IncludeOffscreen) return [pscustomobject]@{ AllRecords=@() } }
+
+    # Two distinct cards with identical names and source keys remain ambiguous.
+    $script:invokedKeys = @(); $script:invokedRuntimeIds = @()
+    function Get-ImaVisibleTitleSnapshot { param($Root) return [pscustomobject]@{ Records=@($mockTargetCard, $duplicate) } }
+    $persistentError = ''; $clock = [Diagnostics.Stopwatch]::StartNew()
+    try { Invoke-ImaArticleRecord $requested } catch { $persistentError = $_.Exception.Message }
+    $clock.Stop()
+    Check $true ($persistentError -like '*存在歧义*') 'persistent same-title same-key physical duplicates are rejected'
+    Check 0 $script:invokedKeys.Count 'persistent duplicate never invokes either card'
+    Check 0 $script:invokedRuntimeIds.Count 'persistent duplicate never invokes a physical element'
+    Check $true ($clock.ElapsedMilliseconds -lt 5500) 'persistent duplicate stays within the bounded locate budget'
+
+    # A title match cannot substitute for the requested source identity.
+    $decoy = Make-MockArticleElement 'key-decoy' 'same title' 303
+    $script:invokedKeys = @(); $script:invokedRuntimeIds = @()
+    function Get-ImaVisibleTitleSnapshot { param($Root) return [pscustomobject]@{ Records=@($decoy, $mockTargetCard) } }
+    Invoke-ImaArticleRecord $requested
+    Check 1 $script:invokedKeys.Count 'same-title decoy does not cause a second invocation'
+    Check 'key-transient' $script:invokedKeys[0] 'strict key chooses the target over a same-title decoy'
+    Check 101 $script:invokedRuntimeIds[0] 'strict key invokes the target physical element'
+    $script:invokedKeys = @(); $script:invokedRuntimeIds = @()
+    function Get-ImaVisibleTitleSnapshot { param($Root) return [pscustomobject]@{ Records=@($decoy) } }
+    Check-Throws { Invoke-ImaArticleRecord $requested } 'a same-title decoy alone cannot resolve the missing identity'
+    Check 0 $script:invokedKeys.Count 'missing identity never invokes the same-title decoy'
+
+    # Cancellation while waiting on an ambiguous snapshot must escape without input.
+    $script:invokedKeys = @(); $script:invokedRuntimeIds = @(); $script:cancelChecks = 0
+    function Get-ImaVisibleTitleSnapshot { param($Root) return [pscustomobject]@{ Records=@($mockTargetCard, $duplicate) } }
+    function Test-ImaCancellation {
+        $script:cancelChecks++
+        throw [OperationCanceledException]::new('cancel ambiguous locate')
+    }
+    $canceled = $false
+    try { Invoke-ImaArticleRecord $requested } catch [OperationCanceledException] { $canceled = $true }
+    Check $true $canceled 'cancellation during ambiguous locating propagates'
+    Check $true ($script:cancelChecks -ge 1) 'ambiguous locating polls cancellation'
+    Check 0 $script:invokedKeys.Count 'canceled ambiguous locating never invokes a card'
 }
 
 Write-Output "PASS: $script:Checks general-text and low-interference assertions (no real desktop operations)"
