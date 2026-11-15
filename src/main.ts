@@ -8,6 +8,7 @@ import {
   Plugin,
   PluginSettingTab,
   Setting,
+  type SettingDefinitionItem,
   TFile,
   TFolder,
   WorkspaceLeaf,
@@ -29,6 +30,24 @@ import { runMarkdownConversion, type ConvertTask, type ConvertResultSummary } fr
 import { processSinglePdf } from "./pdf-markdown-core";
 import { getStrings } from "./i18n";
 import { calculateDashboardStats, localDateKey, restoreMetrics, type SyncMetrics } from "./dashboard-stats";
+import { createSourceBinding, restoreSourceBinding, rebindSource, isSourceInspection, isSourceNeedsRebind,
+  restorePendingSourceResume, isSourcePendingRecords,
+  type SourceTargetKind, type SourceBinding, type SourceInspection, type SourceNeedsRebind, type SourcePendingRecord, type PendingSourceResume } from "./source-binding";
+
+import { isSourceCatalog, type SourceCatalog } from "./source-catalog";
+import { createScopeDraft, scopeDirty, scopeFingerprint, scopeValues, scopeKeys, sourcePath, sameSource, type ScopeDraft, type ScopeValues } from "./scope-draft";
+import { ScopePicker } from "./scope-picker";
+import { IdentityPicker } from "./identity-picker";
+import { DesktopIdentityProvider, type NativeIdentityRequest } from "./desktop-identity-provider";
+import { runSilentIdentity } from "./silent-identity-runner";
+import { windowsPowerShellPath } from "./windows-runtime";
+import { buildFolderDestinations, folderDestinationKey, resolveFolderDestination } from "./folder-destinations";
+import { drawFlowMap, FlowSettingsModal, registerFlowIcon, type FlowPanels, type FlowGroup } from "./flow-settings";
+import { sourceHealthKey, sourceProblemMessage } from "./source-health";
+import { quantityPopover } from "./quantity-popover";
+import { setQuietLabel, silenceHoverHints } from "./quiet-labels";
+import { activeProfile, chooseIdentity, refreshIdentityLabels, updateIdentityOptions, verifyIdentity, acknowledgeIdentityRange, migrateDesktopIdentity, desktopSource,
+  type IdentityProvider, type IdentityState, type IdentityChoice } from "./source-identity";
 
 const GITHUB_REPOSITORY_URL = "https://github.com/oooing/ima-share-sync";
 
@@ -37,6 +56,12 @@ interface ImaSpeedSyncSettings {
   hasConsented: boolean;
   knowledgeBaseName: string;
   folderName: string;
+  sourceTargetKind: SourceTargetKind;
+  sourceFolderPath?: string[];
+  sourceCatalogPath?: string[];
+  sourceBinding?: SourceBinding;
+  sourceIdentity?: IdentityState;
+  pendingSourceResume?: PendingSourceResume;
   destinationPath: string;
   includeSourceFolder: boolean;
   overwriteSameName: boolean;
@@ -66,6 +91,7 @@ interface ImaSpeedSyncSettings {
 type NotificationSetting = "notificationsEnabled" | "notifyAutoSuccess" | "notifyAutoFailure" | "notifyManualResult" | "showErrorBadge" | "showOperationBefore" | "showOperationAfter";
 
 interface SyncReport {
+  action?: "source-settings";
   id?: string;
   read?: boolean;
   finishedAt: number;
@@ -115,6 +141,7 @@ function restoreSyncReports(value: unknown): SyncReport[] {
       status: report.status as SyncReport["status"],
       summary: report.summary.slice(0, 2000),
       errors,
+      ...(report.action === "source-settings" ? { action: "source-settings" as const } : {}),
       ...(typeof report.destination === "string" ? { destination: report.destination } : {}),
       ...(restoreMetrics(report.metrics) ? { metrics: restoreMetrics(report.metrics) } : {}),
     });
@@ -129,6 +156,7 @@ interface ExtractedArticle {
   sourceId?: string;
   complete?: boolean;
   relativeFolder?: string[];
+  relativeFolderIds?: string[];
   downloadedFile?: string;
 }
 
@@ -138,6 +166,14 @@ interface ExtractionError {
 }
 
 interface ExtractionResult {
+  identityResult?: unknown;
+  identityErrorCode?: string;
+  sourceFolderObservations?: { sourceId: string; relativeFolder: string[]; relativeFolderIds: string[] }[];
+  sourceCatalog?: SourceCatalog;
+  sourceInspection?: SourceInspection;
+  sourceNeedsRebind?: SourceNeedsRebind;
+  sourcePendingRecords?: SourcePendingRecord[];
+  sourcePendingUnresumableCount?: number;
   busy?: boolean;
   canceled?: boolean;
   locked?: boolean;
@@ -183,6 +219,23 @@ interface SyncedAttachment {
   sourceScope: string;
 }
 
+interface SourceRebindSession {
+  originalFolderPath?: string[];
+  candidateFolderPath?: string[];
+  readonly knowledgeBaseName: string;
+  readonly originalFolderName: string;
+  readonly localDestination: string;
+  readonly sourceScope: string;
+  candidateName: string;
+  candidateKnowledgeBaseName: string;
+  revision: number;
+  inspection?: SourceInspection;
+  originalTargetKind?: SourceTargetKind;
+  candidateTargetKind?: SourceTargetKind;
+  selection?: boolean;
+  preserveIdentity?: boolean;
+}
+
 interface SettingsController {
   open(): void;
   openTabById(id: string): void;
@@ -202,6 +255,7 @@ const DEFAULT_SETTINGS: ImaSpeedSyncSettings = {
   hasConsented: false,
   knowledgeBaseName: "",
   folderName: "",
+  sourceTargetKind: "folder",
   destinationPath: "IMA Share Sync",
   includeSourceFolder: true,
   overwriteSameName: false,
@@ -241,6 +295,7 @@ function renderPageHeader(container: HTMLElement, title: string, onBack: () => v
   setIcon(back.createSpan({ attr: { "aria-hidden": "true" } }), "arrow-left");
   back.addEventListener("click", onBack);
   header.createEl("h4", { text: title });
+  silenceHoverHints(header);
 }
 
 class SyncHistoryPanel {
@@ -252,7 +307,7 @@ class SyncHistoryPanel {
 
   constructor(private readonly getReports: () => readonly SyncReport[],
     focusedId: string | undefined, private readonly onViewed: (reports: readonly SyncReport[]) => void,
-    private readonly onClosed: () => void) {
+    private readonly onClosed: () => void, private readonly onSourceSettings?: () => void) {
     this.focusedId = focusedId;
     if (focusedId) this.expandedIds.add(focusedId);
     const index = getReports().findIndex((report) => report.id === focusedId);
@@ -284,6 +339,9 @@ class SyncHistoryPanel {
         text: `${new Date(report.finishedAt).toLocaleString("zh-CN")} · ${report.interactive ? "手动同步" : "自动同步"} · ${report.status === "failed" ? "存在异常" : report.status === "canceled" ? "已取消" : "已完成"}`,
       });
       record.createEl("p", { text: report.summary });
+      if (report.action === "source-settings" && this.onSourceSettings) {
+        record.createEl("button", { text: "检查来源" }).addEventListener("click", this.onSourceSettings);
+      }
       for (const error of report.errors) {
         record.createEl("p", { text: `${error.title || "同步任务"}：${error.message}` });
       }
@@ -338,6 +396,237 @@ class SyncHistoryPanel {
   }
 }
 
+class SourceSelectionModal extends Modal {
+  private closed = false;
+  private busy = false;
+  private saving = false;
+  private message = "";
+  private knowledgeBases?: SourceCatalog;
+  private folders?: SourceCatalog;
+  private confirmButton?: HTMLButtonElement;
+  private statusEl?: HTMLElement;
+  private folderInput?: HTMLInputElement;
+  private folderDropdown?: HTMLSelectElement;
+
+  constructor(private readonly plugin: ImaSpeedSyncPlugin, private readonly session: SourceRebindSession) {
+    super(plugin.app);
+  }
+
+  override onOpen(): void { this.render(); }
+
+  private invalidate(): void {
+    this.message = "";
+    this.statusEl?.setText("");
+    if (this.confirmButton) this.confirmButton.disabled = true;
+  }
+
+  private chooseKnowledgeBase(name: string): void {
+    this.plugin.setSourceRebindKnowledgeBase(this.session, name);
+    this.plugin.setSourceRebindCandidate(this.session, "");
+    this.folders = undefined;
+    if (this.folderInput) this.folderInput.value = "";
+    if (this.folderDropdown) this.folderDropdown.disabled = true;
+    this.invalidate();
+  }
+
+  private render(): void {
+    if (this.closed) return;
+    const s = getStrings();
+    this.titleEl.setText(s.sourceSelectionTitle);
+    this.contentEl.empty();
+    this.folderInput = undefined;
+    this.folderDropdown = undefined;
+    const root = this.contentEl;
+    new Setting(root).setName(s.kbName).setDesc(s.kbDesc)
+      .addText((text) => text.setValue(this.session.candidateKnowledgeBaseName).setDisabled(this.busy)
+        .onChange((value) => { this.chooseKnowledgeBase(value); }))
+      .addButton((button) => button.setButtonText(s.sourceCatalogRead).setDisabled(this.busy)
+        .onClick(() => { void this.read("knowledge-bases"); }));
+    if (this.knowledgeBases) {
+      new Setting(root).setName(s.sourceCatalogPrompt).setDesc(s.sourceCatalogVisible)
+        .addDropdown((dropdown) => {
+          dropdown.addOption("", s.sourceChoose);
+          for (const name of this.knowledgeBases!.names) dropdown.addOption(name, name);
+          dropdown.setDisabled(this.busy).onChange((value) => {
+            if (value) { this.chooseKnowledgeBase(value); this.render(); }
+          });
+        });
+    }
+    new Setting(root).setName(s.sourceRange).setDesc(s.sourceRangeDesc)
+      .addDropdown((dropdown) => dropdown.addOption("folder", s.sourceRangeFolder).addOption("knowledge-base", s.sourceRangeKnowledgeBase)
+        .setValue(this.session.candidateTargetKind ?? "folder").setDisabled(this.busy).onChange((value) => {
+          this.plugin.setSourceSelectionKind(this.session, value as SourceTargetKind); this.invalidate(); this.render();
+        }));
+    if (this.session.candidateTargetKind !== "knowledge-base") {
+      new Setting(root).setName(s.sourceFolderName).setDesc(s.sourceFolderDesc)
+        .addText((text) => { this.folderInput = text.inputEl; text.setValue(this.session.candidateName).setDisabled(this.busy).onChange((value) => {
+          this.plugin.setSourceRebindCandidate(this.session, value); this.invalidate();
+        }); })
+        .addButton((button) => button.setButtonText(s.sourceCatalogRead).setDisabled(this.busy)
+          .onClick(() => { void this.read("folders"); }));
+      if (this.folders && this.folders.knowledgeBaseName === this.session.candidateKnowledgeBaseName) {
+        new Setting(root).setName(s.sourceCatalogPrompt).setDesc(s.sourceCatalogFolders)
+          .addDropdown((dropdown) => {
+            this.folderDropdown = dropdown.selectEl;
+            dropdown.addOption("", s.sourceChoose);
+            for (const name of this.folders!.names) dropdown.addOption(name, name);
+            dropdown.setDisabled(this.busy).onChange((value) => {
+              if (value) { this.plugin.setSourceRebindCandidate(this.session, value); this.invalidate(); this.render(); }
+            });
+          });
+      }
+    }
+    if (this.session.knowledgeBaseName) new Setting(root).setName(s.sourceSelectionRename).setDesc(s.sourceSelectionRenameDesc)
+      .addToggle((toggle) => toggle.setValue(!!this.session.preserveIdentity).setDisabled(this.busy).onChange((value) => {
+        this.plugin.setSourceSelectionIdentity(this.session, value); this.invalidate();
+      }));
+    new Setting(root).setName(s.sourceRebindDestination).setDesc(this.session.localDestination);
+    const status = root.createDiv({ attr: { role: "status", "aria-live": "polite" } });
+    this.statusEl = status;
+    status.setText(this.message);
+    const actions = root.createDiv({ cls: "modal-button-container" });
+    const check = actions.createEl("button", { text: s.sourceRebindCheck });
+    check.disabled = this.busy;
+    check.addEventListener("click", () => { void this.check(); });
+    const confirm = actions.createEl("button", { text: s.sourceSelectionConfirm, cls: "mod-cta" });
+    this.confirmButton = confirm;
+    confirm.disabled = this.busy || !this.session.inspection;
+    confirm.addEventListener("click", () => { void this.confirm(); });
+    const cancel = actions.createEl("button", { text: s.sourceRebindCancel });
+    cancel.disabled = this.saving;
+    cancel.addEventListener("click", () => this.close());
+    silenceHoverHints(this.modalEl);
+  }
+
+  private async read(kind: "knowledge-bases" | "folders"): Promise<void> {
+    this.busy = true; this.message = getStrings().sourceCatalogReading; this.render();
+    try {
+      const catalog = await this.plugin.readSourceCatalog(this.session, kind);
+      if (this.closed) return;
+      if (kind === "knowledge-bases") this.knowledgeBases = catalog; else this.folders = catalog;
+      this.message = catalog.ambiguousNames.length ? getStrings().sourceCatalogAmbiguous : catalog.names.length ? "" : getStrings().sourceCatalogEmpty;
+    } catch (error) { this.message = error instanceof Error ? error.message : String(error); }
+    finally { this.busy = false; this.render(); }
+  }
+
+  private async check(): Promise<void> {
+    this.busy = true; this.message = getStrings().sourceRebindChecking; this.render();
+    try {
+      const inspection = await this.plugin.inspectSourceFolder(this.session);
+      this.message = `${inspection.knowledgeBaseName}\n${inspection.breadcrumb.join(" > ")}`;
+    } catch (error) { this.message = error instanceof Error ? error.message : String(error); }
+    finally { this.busy = false; this.render(); }
+  }
+
+  private async confirm(): Promise<void> {
+    this.busy = true; this.saving = true; this.render();
+    try {
+      await this.plugin.confirmSourceBinding(this.session);
+      this.saving = false; this.close(); new Notice(getStrings().sourceSelectionSaved);
+    } catch (error) { this.message = error instanceof Error ? error.message : String(error); }
+    finally { this.busy = false; this.saving = false; this.render(); }
+  }
+
+  override onClose(): void {
+    this.closed = true;
+    if (!this.saving) this.plugin.cancelSourceRebind(this.session);
+    this.contentEl.empty();
+  }
+}
+
+class SourceRebindModal extends Modal {
+  private closed = false;
+  private saving = false;
+
+  constructor(private readonly plugin: ImaSpeedSyncPlugin, private readonly session: SourceRebindSession) {
+    super(plugin.app);
+  }
+
+  override onOpen(): void {
+    const s = getStrings();
+    this.titleEl.setText(s.sourceRebind);
+    const { contentEl } = this;
+    new Setting(contentEl).setName(s.kbName).setDesc(this.session.knowledgeBaseName);
+    new Setting(contentEl).setName(s.sourceRebindOld).setDesc(this.session.originalFolderName);
+    new Setting(contentEl).setName(s.sourceRebindDestination).setDesc(this.session.localDestination);
+    let kbInput: HTMLInputElement;
+    new Setting(contentEl).setName(s.sourceRebindKnowledgeBase).addText((text) => {
+      kbInput = text.inputEl;
+      text.setValue(this.session.candidateKnowledgeBaseName).onChange((value) => {
+        this.plugin.setSourceRebindKnowledgeBase(this.session, value);
+        confirm.disabled = true;
+        status.setText("");
+      });
+    });
+    let input: HTMLInputElement;
+    new Setting(contentEl).setName(s.sourceRebindNew).addText((text) => {
+      input = text.inputEl;
+      text.setValue(this.session.candidateName).onChange((value) => {
+        this.plugin.setSourceRebindCandidate(this.session, value);
+        confirm.disabled = true;
+        status.setText("");
+      });
+    });
+    const status = contentEl.createDiv({ attr: { role: "status", "aria-live": "polite" } });
+    const actions = contentEl.createDiv({ cls: "modal-button-container" });
+    const check = actions.createEl("button", { text: s.sourceRebindCheck });
+    const confirm = actions.createEl("button", { text: s.sourceRebindConfirm, cls: "mod-cta" });
+    const cancel = actions.createEl("button", { text: s.sourceRebindCancel });
+    confirm.disabled = true;
+    check.addEventListener("click", () => { void (async () => {
+      check.disabled = true;
+      confirm.disabled = true;
+      status.setText(s.sourceRebindChecking);
+      try {
+        const inspection = await this.plugin.inspectSourceFolder(this.session);
+        if (this.closed) return;
+        status.setText(`${s.kbName}: ${inspection.knowledgeBaseName}\n${s.sourceRebindVerified}: ${inspection.breadcrumb.join(" > ")}`);
+        confirm.disabled = false;
+      } catch (error) {
+        if (!this.closed) status.setText(error instanceof Error ? error.message : String(error));
+      } finally {
+        if (!this.closed) check.disabled = false;
+      }
+    })(); });
+    confirm.addEventListener("click", () => { void (async () => {
+      this.saving = true;
+      confirm.disabled = true;
+      check.disabled = true;
+      input.disabled = true;
+      kbInput.disabled = true;
+      cancel.disabled = true;
+      try {
+        await this.plugin.confirmSourceBinding(this.session);
+        this.saving = false;
+        this.close();
+        new Notice(s.sourceRebindSaved);
+      } catch (error) {
+        if (!this.closed) status.setText(error instanceof Error ? error.message : String(error));
+      } finally {
+        this.saving = false;
+        if (!this.closed) {
+          check.disabled = false;
+          input.disabled = false;
+          kbInput.disabled = false;
+          cancel.disabled = false;
+        }
+      }
+    })(); });
+    cancel.addEventListener("click", () => this.close());
+    silenceHoverHints(this.modalEl);
+  }
+
+  override close(): void {
+    if (!this.saving) super.close();
+  }
+
+  override onClose(): void {
+    this.closed = true;
+    this.plugin.cancelSourceRebind(this.session);
+    this.contentEl.empty();
+  }
+}
+
 class ConsentModal extends Modal {
   private settled = false;
 
@@ -370,6 +659,7 @@ class ConsentModal extends Modal {
           .setCta()
           .onClick(() => this.resolve(true)),
       );
+    silenceHoverHints(this.modalEl);
   }
 
   override onClose(): void {
@@ -480,8 +770,8 @@ class ImaSpeedSyncView extends ItemView {
       attr: { "aria-label": `当前版本 ${this.plugin.manifest.version}` },
     });
 
-    const toolbar = this.contentEl.createDiv({ cls: "ima-speed-sync-toolbar" });
-    const syncGroup = toolbar.createDiv({ cls: "ima-speed-sync-split-button" });
+    const toolbar = this.contentEl.createDiv({ cls: "ima-speed-sync-toolbar ima-palette-9" });
+    const syncGroup = toolbar.createDiv({ cls: `ima-speed-sync-split-button${this.plugin.isRunning ? " is-running" : ""}` });
     const syncButton = syncGroup.createEl("button", {
       text: this.plugin.isRunning ? "取消同步" : "立即同步",
       cls: this.plugin.isRunning ? "mod-warning" : undefined,
@@ -500,10 +790,9 @@ class ImaSpeedSyncView extends ItemView {
     });
     modeButton.disabled = this.plugin.isRunning;
     modeButton.setAttr("aria-label", "选择同名文件处理方式");
-    modeButton.setAttr("title", `当前：${this.plugin.settings.overwriteSameName ? "同名覆盖" : "同名不覆盖"}`);
     modeButton.addEventListener("click", (event) => this.showCollisionModeMenu(event));
 
-    const settingsButton = toolbar.createEl("button", { text: "设置" });
+    const settingsButton = toolbar.createEl("button", { text: "设置", cls: "ima-speed-sync-settings-button" });
     settingsButton.addEventListener("click", () => this.plugin.openSettings());
 
     this.plugin.renderSyncStatus(this.contentEl);
@@ -514,6 +803,7 @@ class ImaSpeedSyncView extends ItemView {
     });
     entry.addEventListener("click", () => this.navigate("articles"));
     this.plugin.renderHistoryEntry(this.contentEl);
+    silenceHoverHints(this.contentEl);
   }
 
   private renderArticles(): void {
@@ -587,13 +877,290 @@ class ImaSpeedSyncView extends ItemView {
 }
 
 class ImaSpeedSyncSettingTab extends PluginSettingTab {
-  private advancedOpen = false;
+  private renderRoot?: HTMLElement;
+
+  override getSettingDefinitions(): SettingDefinitionItem[] {
+    // Index names only: registering settings must not read IMA or change saved options.
+    const aliases = ["IMA", "同步", "知识库", "文件夹", "同名覆盖", "PDF", "Markdown", "自动同步", "日志"];
+    for (const language of ["zh", "en"] as const) {
+      for (const [key, value] of Object.entries(getStrings(language))) {
+        if (typeof value === "string" && (key.endsWith("Name") || key.startsWith("tab"))) aliases.push(value);
+      }
+    }
+    return [{
+      name: "IMA Share Sync",
+      aliases: [...new Set(aliases)],
+      render: setting => {
+        // Reuse the custom UI and its validated save paths on both host generations.
+        setting.settingEl.empty();
+        setting.settingEl.addClass("ima-settings-host");
+        const root = setting.settingEl.createDiv({ cls: "ima-settings-surface" });
+        this.renderRoot = root;
+        this.renderSettings();
+        if (this.plugin.identityProvider) void this.refreshIdentitySource();
+        return () => {
+          if (this.renderRoot === root) { this.hide(); this.renderRoot = undefined; }
+        };
+      },
+    }];
+  }
+  private flowModal?: FlowSettingsModal;
+  private flowPanels?: FlowPanels;
+  private updateFlowMap?: () => void;
   private activeTabId: "stats" | "scope" | "markdown" | "notifications" | "general" = "stats";
   private updateScopeSummary?: () => void;
   private quantitySelect?: HTMLSelectElement;
   private tabButtons = new Map<string, HTMLElement>();
   private panels: Record<"stats" | "scope" | "markdown" | "notifications" | "general", HTMLElement> | null = null;
-  private kbInputEl?: HTMLInputElement;
+  private kbInputEl?: HTMLElement;
+  private scopeDraft?: ScopeDraft;
+  private scopeSaving = false;
+  private scopeSaveFailed = false;
+  private scopeFooter?: HTMLElement;
+  private scopeStatus = "";
+  private sourcePicker?: ScopePicker | IdentityPicker;
+  private identityLoading = false;
+  private identityMessage = "";
+  private identityError = false;
+  private identitySavesPending = 0;
+  private identitySaveFailed = false;
+  private identitySaveQueue: Promise<void> = Promise.resolve();
+
+  private queueIdentitySave(): void {
+    const values = scopeValues(this.getScopeDraft().values);
+    this.identitySavesPending++; this.identitySaveFailed = false; this.scopeStatus = "";
+    this.renderScopeFooter();
+    this.identitySaveQueue = this.identitySaveQueue.then(async () => {
+      try {
+        await this.plugin.saveIdentityOptions(values);
+        const draft = this.getScopeDraft();
+        draft.original = scopeValues(values); draft.fingerprint = scopeFingerprint(this.plugin.settings);
+        this.identitySaveFailed = false; this.scopeStatus = "已自动保存";
+      } catch (error) {
+        this.identitySaveFailed = true;
+        this.scopeStatus = "未保存：" + (error instanceof Error ? error.message : String(error));
+      } finally { this.identitySavesPending--; this.renderScopeFooter(); }
+    });
+  }
+
+  async refreshIdentitySource(): Promise<void> {
+    if (!this.plugin.identityProvider || this.identitySavesPending || this.sourcePicker || this.identityLoading) return;
+    this.identityMessage = ""; this.identityError = false;
+    const profile = activeProfile(this.plugin.settings);
+    if (!profile) return;
+    this.identityLoading = true;
+    try {
+      const choice = await this.plugin.resolveActiveIdentity();
+      const next = refreshIdentityLabels(this.plugin.settings, choice);
+      if (next.knowledgeBaseName !== this.plugin.settings.knowledgeBaseName || next.folderName !== this.plugin.settings.folderName ||
+        JSON.stringify(sourcePath(next)) !== JSON.stringify(sourcePath(this.plugin.settings))) {
+        await this.plugin.persistIdentitySettings(next);
+        if (profile.knowledgeBaseName !== choice.knowledgeBase.name || JSON.stringify(profile.folderPath) !== JSON.stringify(choice.folder?.path.map(part => part.name) ?? []))
+          this.identityMessage = "来源名称已更新，原保存位置和同步记录已保留。";
+      }
+      this.scopeDraft = createScopeDraft(this.plugin.settings);
+    } catch (error) {
+      this.identityError = true; this.identityMessage = this.plugin.currentSourceProblem || (error instanceof Error ? error.message : String(error));
+    } finally {
+      this.identityLoading = false;
+    }
+    if (this.panels) this.renderSettings();
+  }
+
+  private async chooseIdentity(mode: "knowledge-bases" | "folders" | "legacy"): Promise<void> {
+    await this.identitySaveQueue;
+    if (!this.plugin.identityProvider || this.identitySaveFailed) return;
+    const settings = this.plugin.settings;
+    const state = settings.sourceIdentity;
+    const legacy = state?.legacy;
+    const binding = legacy?.binding ?? settings.sourceBinding;
+    const picker = new IdentityPicker(this.app, {
+      provider: this.plugin.identityProvider, mode,
+      identityProvider: this.plugin.identityProvider instanceof DesktopIdentityProvider ? "desktop-uia" : "ima-api",
+      currentId: this.plugin.currentSourceProblem ? undefined : state?.activeKnowledgeBaseId, profiles: state?.profiles ?? {},
+      startAtRoot: Boolean(this.plugin.currentSourceProblem),
+      legacySourceIds: this.plugin.syncedAttachments.filter(item => !binding || item.sourceScope === binding.sourceScope).map(item => item.sourceId),
+      legacyDescription: "原保存位置：" + (binding?.localDestination ?? settings.destinationPath),
+      commit: async (choice, link, matched) => {
+        await this.plugin.commitIdentityChoice(choice, link, matched);
+        this.scopeDraft = createScopeDraft(this.plugin.settings); this.identityMessage = "";
+        this.identityError = false; this.scopeStatus = "已自动保存"; this.renderSettings();
+      },
+      close: () => {
+        this.sourcePicker = undefined; if (this.panels) this.renderSettings();
+        const reminder = this.containerEl.querySelector<HTMLElement>(".ima-range-review");
+        if (reminder) { reminder.scrollIntoView({ block: "nearest" }); reminder.focus(); } else this.kbInputEl?.focus();
+      },
+    });
+    this.sourcePicker = picker; picker.open();
+  }
+
+  private renderIdentitySource(root: HTMLElement): void {
+    const values = this.getScopeDraft().values;
+    const chooser = (label: string, value: string, action: () => void) => {
+      const row = new Setting(root).setName(label);
+      const b = row.controlEl.createEl("button", { cls: "ima-source-chooser",
+        attr: { type: "button", "aria-label": "选择" + label, "aria-haspopup": "dialog" } });
+      b.createSpan({ cls: "ima-source-path-label", text: value }); setIcon(b.createSpan(), "chevron-down");
+      b.addEventListener("click", action);
+      return { row, b };
+    };
+    const location = [values.knowledgeBaseName, ...(values.sourceTargetKind === "folder" ? sourcePath(values) : [])].filter(Boolean).join(" / ");
+    const kb = chooser("知识库与文件夹", location || "选择来源", () => { void this.chooseIdentity("knowledge-bases"); });
+    kb.row.settingEl.addClass("ima-source-location-row");
+    kb.b.setAttribute("aria-label", "选择来源");
+    this.kbInputEl = kb.b;
+    const refresh = kb.row.infoEl.createEl("button", { cls: "ima-source-refresh", attr: { type: "button", "aria-label": "刷新来源" } });
+    setIcon(refresh, "refresh-cw");
+    refresh.addEventListener("click", () => { void this.refreshIdentitySource(); });
+    const problem = this.plugin.currentSourceProblem || (this.identityError ? this.identityMessage : "");
+    if (problem || this.identityMessage) {
+      const notice = root.createDiv({ cls: "ima-identity-inline" + (problem ? " is-error ima-source-problem" : ""),
+        attr: { role: problem ? "alert" : "status" } });
+      if (problem) setIcon(notice.createSpan({ attr: { "aria-hidden": "true" } }), "alert-triangle");
+      notice.createSpan({ text: problem || this.identityMessage });
+      if (problem) {
+        notice.createEl("button", { text: "重新选择", attr: { type: "button" } })
+          .addEventListener("click", () => { void this.chooseIdentity("knowledge-bases"); });
+      } else {
+        const dismiss = notice.createEl("button", { attr: { "aria-label": "关闭改名提示", type: "button" } });
+        setIcon(dismiss, "x"); dismiss.addEventListener("click", () => { this.identityMessage = ""; notice.remove(); });
+      }
+    }
+    if ((!activeProfile(this.plugin.settings) && values.knowledgeBaseName) || this.plugin.settings.sourceIdentity?.legacy) {
+      const row = new Setting(root).setName("关联原同步记录").setDesc("确认一次原来源，以后改名会自动跟随。");
+      row.addButton(button => button.setButtonText("关联原记录").onClick(() => { void this.chooseIdentity("legacy"); }));
+    }
+
+  }
+
+  private getScopeDraft(): ScopeDraft {
+    return this.scopeDraft ??= createScopeDraft(this.plugin.settings);
+  }
+
+  private scopeChanged(): void {
+    this.scopeSaveFailed = false;
+    this.updateFlowMap?.();
+    if (this.plugin.identityProvider) { this.queueIdentitySave(); return; }
+    this.scopeStatus = "";
+    this.renderScopeFooter();
+  }
+
+  private renderScopeFooter(): void {
+    const saveFailed = this.identitySaveFailed || this.scopeSaveFailed;
+    this.flowModal?.setStatus(saveFailed ? this.scopeStatus || "保存失败，请重试。" : "");
+    if (!this.scopeFooter) return;
+    this.scopeFooter.empty();
+    if (this.plugin.identityProvider) {
+      // Keep the overview quiet after saving; failures still expose recovery actions.
+      if (!this.identitySaveFailed) return;
+      this.scopeFooter.createSpan({ text: this.identitySavesPending ? "正在保存…" : this.scopeStatus || "更改会自动保存",
+        attr: { role: "status", "aria-live": "polite" } });
+      if (this.identitySaveFailed && !this.identitySavesPending) {
+        const retry = this.scopeFooter.createEl("button", { text: "重试", attr: { type: "button" } });
+        retry.addEventListener("click", () => this.queueIdentitySave());
+        const undo = this.scopeFooter.createEl("button", { text: "恢复已保存设置", attr: { type: "button" } });
+        undo.addEventListener("click", () => { this.scopeDraft = createScopeDraft(this.plugin.settings);
+          this.identitySaveFailed = false; this.scopeStatus = ""; this.renderSettings(); });
+      }
+      return;
+    }
+    const draft = this.getScopeDraft();
+    const dirty = scopeDirty(draft);
+    this.scopeFooter.createSpan({ text: this.scopeSaving ? "正在检查并保存…" : this.scopeStatus || (dirty ? "有未保存的更改" : "设置已保存"), attr: { role: "status", "aria-live": "polite" } });
+    const actions = this.scopeFooter.createDiv();
+    const undo = actions.createEl("button", { text: "撤销更改" });
+    undo.disabled = !dirty || this.scopeSaving;
+    undo.addEventListener("click", () => { this.scopeDraft = createScopeDraft(this.plugin.settings); this.scopeStatus = ""; this.scopeSaveFailed = false; this.renderSettings(); });
+    const save = actions.createEl("button", { text: "保存设置", cls: "mod-cta" });
+    save.disabled = !dirty || this.scopeSaving || !draft.values.knowledgeBaseName ||
+      !draft.values.destinationPath.trim() || (draft.values.sourceTargetKind === "folder" && !draft.values.folderName);
+    save.addEventListener("click", () => { void this.saveScope(); });
+  }
+
+  private async saveScope(): Promise<void> {
+    if (this.scopeSaving) return;
+    this.scopeSaveFailed = false;
+    this.scopeSaving = true; this.renderSettings();
+    try {
+      await this.plugin.saveScopeDraft(this.getScopeDraft());
+      this.scopeDraft = createScopeDraft(this.plugin.settings);
+      this.scopeStatus = "设置已保存";
+    } catch (error) { this.scopeSaveFailed = true; this.scopeStatus = error instanceof Error ? error.message : String(error); }
+    finally { this.scopeSaving = false; if (this.panels) this.renderSettings(); }
+  }
+
+  private chooseScope(kind: "knowledge-bases" | "folders" | "destination"): void {
+    if (this.scopeSaving) return;
+    if (this.plugin.identityProvider && kind !== "destination") { void this.chooseIdentity(kind); return; }
+    const draft = this.getScopeDraft();
+    const values = draft.values;
+    let session: SourceRebindSession | undefined;
+    try {
+      if (kind !== "destination") session = this.plugin.beginScopeSelection(values);
+      const picker = new ScopePicker(this.app, {
+        title: kind === "knowledge-bases" ? "选择知识库" : kind === "folders" ? "选择源文件夹" : "选择保存位置",
+        selected: kind === "knowledge-bases" ? [values.knowledgeBaseName] : kind === "folders" ? sourcePath(values) : [values.destinationPath],
+        browse: kind === "folders", rename: kind !== "destination" && !!draft.original.knowledgeBaseName,
+        preserveIdentity: draft.preserveIdentity,
+        load: async parent => {
+          if (kind === "destination") return { names: this.app.vault.getAllLoadedFiles()
+            .filter((file): file is TFolder => file instanceof TFolder && !!file.path && file.path !== "/" &&
+              file.path !== this.app.vault.configDir && !file.path.startsWith(`${this.app.vault.configDir}/`))
+            .map(file => file.path).sort(), complete: true };
+          return await this.plugin.readSourceCatalog(session!, kind, parent);
+        },
+        choose: (parts, rename) => {
+          if (kind === "knowledge-bases" && values.knowledgeBaseName !== parts[0]) {
+            values.knowledgeBaseName = parts[0]!; values.folderName = "";
+            delete values.sourceFolderPath; values.sourceTargetKind = "knowledge-base";
+          } else if (kind === "folders") {
+            values.folderName = parts[parts.length - 1]!; values.sourceFolderPath = parts;
+            values.sourceTargetKind = "folder";
+          } else if (kind === "destination") values.destinationPath = parts[0]!;
+          if (kind !== "destination") draft.preserveIdentity = rename;
+          this.scopeChanged(); this.renderSettings();
+        },
+        cancel: () => { if (session) this.plugin.cancelSourceRebind(session); this.sourcePicker = undefined; },
+      });
+      this.sourcePicker = picker; picker.open();
+    } catch (error) { if (session) this.plugin.cancelSourceRebind(session); new Notice(error instanceof Error ? error.message : String(error)); }
+  }
+
+  private renderScopeSource(root: HTMLElement): void {
+    if (this.plugin.identityProvider) { this.renderIdentitySource(root); return; }
+    const values = this.getScopeDraft().values;
+    const chooser = (name: string, value: string, action: () => void): HTMLButtonElement => {
+      const row = new Setting(root).setName(name);
+      const button = row.controlEl.createEl("button", { cls: "ima-source-chooser", attr: { "aria-label": `选择${name}`, "aria-haspopup": "dialog" } });
+      button.createSpan({ text: value });
+      const arrow = button.createSpan(); setIcon(arrow, "chevron-down");
+      button.disabled = this.scopeSaving; button.addEventListener("click", action);
+      return button;
+    };
+    this.kbInputEl = chooser("知识库", values.knowledgeBaseName || "选择知识库", () => this.chooseScope("knowledge-bases"));
+    const range = new Setting(root).setName("同步范围");
+    this.segmented(range.controlEl, "同步范围", [["knowledge-base", "整个知识库"], ["folder", "指定文件夹"]], values.sourceTargetKind, value => {
+      values.sourceTargetKind = value as SourceTargetKind;
+      this.scopeChanged(); this.renderSettings();
+    });
+    if (values.sourceTargetKind === "folder") {
+      chooser("源文件夹", sourcePath(values).join(" / ") || "选择文件夹", () => this.chooseScope("folders"));
+      if (this.plugin.sourceNeedsRebind) root.createDiv({ text: getStrings().sourceRebindNeeded, cls: "setting-item-description" });
+    }
+  }
+
+  private segmented(root: HTMLElement, label: string, options: [string, string][], value: string, change: (value: string) => void): void {
+    const group = root.createDiv({ cls: "ima-scope-segmented", attr: { role: "group", "aria-label": label } });
+    for (const [key, name] of options) {
+      const button = group.createEl("button", { text: name, attr: { "aria-pressed": String(value === key) } });
+      button.disabled = this.scopeSaving;
+      button.addEventListener("click", () => {
+        for (const child of Array.from(group.children)) child.setAttribute("aria-pressed", String(child === button));
+        change(key);
+      });
+    }
+  }
   private mdDashboardEl?: HTMLElement;
   private mdStatusTextEl?: HTMLElement;
   private mdProgressSectionEl?: HTMLElement;
@@ -614,7 +1181,9 @@ class ImaSpeedSyncSettingTab extends PluginSettingTab {
   }
 
   override display(): void {
+    this.renderRoot = undefined;
     this.renderSettings();
+    if (this.plugin.identityProvider) void this.refreshIdentitySource();
   }
 
   switchTab(tabId: "stats" | "scope" | "markdown" | "notifications" | "general", focusKb = false): void {
@@ -637,21 +1206,35 @@ class ImaSpeedSyncSettingTab extends PluginSettingTab {
     this.renderDashboard(this.panels.stats);
   }
 
+  refreshSourceSettings(): void {
+    if (this.panels) this.renderSettings();
+  }
+
+  sourceHealthChanged(): void {
+    this.identityMessage = this.plugin.currentSourceProblem;
+    this.identityError = Boolean(this.identityMessage);
+    if (this.panels && !this.sourcePicker) this.renderSettings();
+  }
+
   override hide(): void {
+    this.sourcePicker?.close();
+    this.flowModal?.close();
+    if (!this.scopeSaving) this.scopeDraft = undefined;
+    this.scopeFooter = undefined;
     this.panels = null;
     this.tabButtons.clear();
     this.kbInputEl = undefined;
   }
 
-  private renderGeneralScope(containerEl: HTMLElement): void {
+  private renderGeneralScope(containerEl: HTMLElement, sourceControls: HTMLElement, saveControls: HTMLElement, sourceAdvanced: HTMLElement, syncAdvanced: HTMLElement, notices: HTMLElement): void {
     const s = getStrings(this.plugin.settings.language);
-    const settings = this.plugin.settings;
+    const settings = this.getScopeDraft().values;
     const legacy = settings.generalSelectionMode === "per-folder";
     const currentMode = settings.syncScopeMode ?? "recent";
     let folderControl: { setDisabled(value: boolean): unknown } | undefined;
     let depthControl: { setDisabled(value: boolean): unknown; setValue(value: string): unknown } | undefined;
     let scopeDetails: HTMLElement | undefined;
-    let subfolderSetting: Setting | undefined;
+    
     let maxFoldersSetting: Setting | undefined;
     if (legacy) {
       new Setting(containerEl)
@@ -659,10 +1242,26 @@ class ImaSpeedSyncSettingTab extends PluginSettingTab {
         .setDesc(`原设置未改变：每个文件夹最多 ${settings.maxItems} 个。切换后改为每次合计最多 ${settings.maxItems} 个，文件夹范围不变。`)
         .addButton((button) => button.setButtonText(`改为每次共 ${settings.maxItems} 个`).onClick(async () => {
           settings.generalSelectionMode = "total";
-          await this.plugin.saveSettings();
+          this.scopeChanged();
           this.renderSettings();
           this.quantitySelect?.focus();
         }));
+    }
+
+    if (this.plugin.identityProvider && this.plugin.settings.sourceIdentity?.rangeReviewRequired) {
+      const warning = notices.createDiv({ cls: "ima-identity-alert ima-range-review", attr: { role: "alert", tabindex: "-1" } });
+      warning.createEl("strong", { text: "来源已更换，请确认下面的同步范围。" });
+      warning.createEl("p", { text: "原文件和记录已保留。确认后关闭此提示，才能开始同步。" });
+      const ack = warning.createEl("button", { cls: "ima-identity-alert-close", attr: { type: "button", "aria-label": "关闭并确认同步范围" } });
+      setIcon(ack, "x");
+      ack.addEventListener("click", () => {
+        ack.disabled = true;
+        void this.identitySaveQueue.then(async () => {
+          if (this.identitySaveFailed) throw new Error("范围尚未保存，请先重试保存。");
+          await this.plugin.persistIdentitySettings(acknowledgeIdentityRange(this.plugin.settings));
+          this.scopeStatus = "已自动保存"; this.renderSettings();
+        }).catch(error => { ack.disabled = false; new Notice(error instanceof Error ? error.message : String(error)); });
+      });
     }
 
     // 双列栅格：左列全部同步（穷尽），右列仅同步最新+级联下沉菜单
@@ -705,32 +1304,20 @@ class ImaSpeedSyncSettingTab extends PluginSettingTab {
     recentContent.createDiv({ cls: "ima-card-title", text: s.modeRecentTitle });
     const recentSummaryRow = recentContent.createDiv({ cls: "ima-card-summary-row" });
     const recentSummaryText = recentSummaryRow.createSpan({ text: formatSummaryText(settings.maxItems) });
-    let isPanelOpen = false;
     const recentArrow = recentSummaryRow.createSpan({ cls: "ima-card-arrow" });
     setIcon(recentArrow, "chevron-down");
 
     // 级联下沉面板（与右卡片天然等宽，绝对定位悬浮层）
     const cascadePanel = colRight.createDiv({ cls: "ima-cascade-popover-panel is-hidden" });
 
-    const onOutsideClick = (evt: MouseEvent) => {
-      const target = evt.target as Node | null;
-      if (isPanelOpen && target && !cascadePanel.contains(target) && !cardRecent.contains(target)) {
-        togglePanel(false);
-      }
-    };
-
-    const togglePanel = (open?: boolean) => {
-      isPanelOpen = open ?? !isPanelOpen;
-      cascadePanel.toggleClass("is-hidden", !isPanelOpen);
-      recentArrow.toggleClass("is-expanded", isPanelOpen);
-      if (typeof window !== "undefined" && typeof window.addEventListener === "function") {
-        if (isPanelOpen) {
-          window.addEventListener("click", onOutsideClick, { capture: true });
-        } else if (typeof window.removeEventListener === "function") {
-          window.removeEventListener("click", onOutsideClick, { capture: true });
-        }
-      }
-    };
+    const togglePanel = quantityPopover(cascadePanel, cardRecent, recentArrow);
+    for (const card of [cardAll, cardRecent]) {
+      card.setAttribute("role", "button"); card.tabIndex = 0;
+      card.addEventListener("keydown", event => {
+        if (event.key === "Enter" || event.key === " ") { event.preventDefault(); card.click(); }
+      });
+    }
+    cardRecent.setAttribute("aria-expanded", "false");
 
     const popHeader = cascadePanel.createDiv({ cls: "ima-popover-header" });
     const breadcrumb = popHeader.createDiv({ cls: "ima-popover-breadcrumb" });
@@ -761,12 +1348,12 @@ class ImaSpeedSyncSettingTab extends PluginSettingTab {
         this.quantitySelect.value = String(Math.min(validQty, 30));
       }
       updateSummary();
-      await this.plugin.saveSettings();
+      this.scopeChanged();
     };
 
     presets.forEach((preset) => {
       const isSelected = settings.maxItems === preset;
-      const row = itemsList.createDiv({ cls: `ima-cascade-option-row${isSelected ? " is-active" : ""}` });
+      const row = itemsList.createEl("button", { cls: `ima-cascade-option-row${isSelected ? " is-active" : ""}`, attr: { type: "button" } });
       rowElements.set(preset, row);
 
       const left = row.createDiv({ cls: "ima-option-row-left" });
@@ -849,7 +1436,7 @@ class ImaSpeedSyncSettingTab extends PluginSettingTab {
         togglePanel(true);
       }
       updateSummary();
-      await this.plugin.saveSettings();
+      this.scopeChanged();
     };
 
     // eslint-disable-next-line @typescript-eslint/no-misused-promises -- mock DOM dispatches await the returned promise in test-main.cjs
@@ -869,11 +1456,11 @@ class ImaSpeedSyncSettingTab extends PluginSettingTab {
     const summaryTitle = summary.createDiv({ cls: "ima-share-sync-scope-title" });
     const updateSummary = (): void => {
       const nested = settings.includeSubfolders && settings.maxFolderDepth > 0;
-      const folder = settings.folderName || "所选文件夹";
+      const folder = settings.sourceTargetKind === "knowledge-base" ? s.sourceRangeKnowledgeBase : settings.folderName || s.sourceRangeFolder;
       const folderNameDesc = settings.folderName ? settings.folderName : "";
-      sourceFolderSetting?.setDesc(settings.includeSourceFolder
-        ? s.includeFolderDescTrue(folderNameDesc)
-        : s.includeFolderDescFalse);
+      try {
+        sourceFolderSetting?.setDesc(`${s.sourceRebindDestination}: ${this.plugin.previewScopeDestination(this.getScopeDraft())}`);
+      } catch { sourceFolderSetting?.setDesc(settings.includeSourceFolder ? s.includeFolderDescTrue(folderNameDesc) : s.includeFolderDescFalse); }
       const isAll = (settings.syncScopeMode ?? "recent") === "all";
       const scope = nested
         ? (isAll
@@ -888,9 +1475,8 @@ class ImaSpeedSyncSettingTab extends PluginSettingTab {
         summaryTitle.setText(s.summaryTitleRecent(settings.maxItems));
       }
       scopeDetails?.setText(scope);
-      subfolderSetting?.setDesc(nested
-        ? s.includeSubfoldersDescTrue
-        : s.includeSubfoldersDescFalse);
+      this.updateFlowMap?.();
+
       if (folderControl) {
         folderControl.setDisabled(!settings.includeSubfolders || isAll);
       }
@@ -915,33 +1501,29 @@ class ImaSpeedSyncSettingTab extends PluginSettingTab {
       });
     hiddenQuantitySetting.settingEl.toggleClass("ima-hidden-setting", true);
 
-    const sourceFolderSetting = new Setting(containerEl)
+    const sourceFolderSetting = new Setting(saveControls)
       .setName(s.includeFolderOption)
       .addToggle((toggle) => toggle.setValue(settings.includeSourceFolder).onChange(async (value) => {
         settings.includeSourceFolder = value;
+        
         updateSummary();
-        await this.plugin.saveSettings();
+        this.scopeChanged();
       }));
 
-    subfolderSetting = new Setting(containerEl)
-      .setName(s.includeSubfoldersOption)
-      .addToggle((toggle) => toggle.setValue(settings.includeSubfolders).onChange(async (value) => {
-        settings.includeSubfolders = value;
-        if (value && settings.maxFolderDepth === 0) settings.maxFolderDepth = 1;
-        // Preserve legacy depth-based behavior, including after restarting.
-        if (!value && legacy) settings.maxFolderDepth = 0;
-        depthControl?.setDisabled(!value);
-        depthControl?.setValue(String(settings.maxFolderDepth || 1));
-        updateSummary();
-        await this.plugin.saveSettings();
-      }));
+    const childRow = new Setting(sourceControls).setName("同步范围");
+    childRow.settingEl.addClass("ima-child-range");
+    if (this.plugin.identityProvider && !activeProfile(this.plugin.settings)) childRow.settingEl.addClass("ima-hidden-setting");
+    this.segmented(childRow.controlEl, "子文件夹范围", [["false", settings.sourceTargetKind === "knowledge-base" ? "仅知识库本层" : "仅当前文件夹"], ["true", "包含子文件夹"]], String(settings.includeSubfolders), value => {
+      settings.includeSubfolders = value === "true";
+      if (settings.includeSubfolders && settings.maxFolderDepth === 0) settings.maxFolderDepth = 1;
+      if (!settings.includeSubfolders && legacy) settings.maxFolderDepth = 0;
+      depthControl?.setDisabled(!settings.includeSubfolders);
+      depthControl?.setValue(String(settings.maxFolderDepth || 1));
+      updateSummary(); this.scopeChanged();
+    });
     updateSummary();
 
-    const advanced = containerEl.createEl("details", { cls: "ima-share-sync-advanced" });
-    advanced.open = this.advancedOpen;
-    advanced.addEventListener("toggle", () => { this.advancedOpen = advanced.open; });
-    advanced.createEl("summary", { text: s.advancedSummary });
-    const content = advanced.createDiv({ cls: "ima-share-sync-advanced-content" });
+    const content = sourceAdvanced;
     scopeDetails = content.createDiv({ cls: "setting-item-description ima-advanced-scope-banner", attr: { role: "status", "aria-live": "polite" } });
     updateSummary();
     const ruleSetting = new Setting(content).setName(s.ruleSettingName).setDesc(s.ruleSettingDesc);
@@ -957,7 +1539,7 @@ class ImaSpeedSyncSettingTab extends PluginSettingTab {
         dropdown.setValue(String(settings.maxFolders)).setDisabled(!settings.includeSubfolders || (settings.syncScopeMode ?? "recent") === "all").onChange(async (value) => {
           settings.maxFolders = Number(value);
           updateSummary();
-          await this.plugin.saveSettings();
+          this.scopeChanged();
         });
       });
     new Setting(content)
@@ -969,14 +1551,14 @@ class ImaSpeedSyncSettingTab extends PluginSettingTab {
         dropdown.setValue(String(settings.maxFolderDepth || 1)).setDisabled(!settings.includeSubfolders).onChange(async (value) => {
           settings.maxFolderDepth = Number(value);
           updateSummary();
-          await this.plugin.saveSettings();
+          this.scopeChanged();
         });
       });
-    const sortSetting = new Setting(content)
+    const sortSetting = new Setting(syncAdvanced)
       .setName(s.sortSettingName)
       .setDesc(s.sortSettingDesc);
     if (sortSetting.settingEl) sortSetting.settingEl.toggleClass("ima-advanced-info-item", true);
-    new Setting(content)
+    new Setting(syncAdvanced)
       .setName(s.titleFilterName)
       .setDesc(s.titleFilterDesc)
       .addDropdown((dropdown) => dropdown
@@ -987,22 +1569,45 @@ class ImaSpeedSyncSettingTab extends PluginSettingTab {
         .setValue(settings.titleFilterMode)
         .onChange(async (value) => {
           settings.titleFilterMode = value as ImaSpeedSyncSettings["titleFilterMode"];
-          await this.plugin.saveSettings();
+          this.scopeChanged();
           this.renderSettings();
         }));
     if (settings.titleFilterMode !== "all") {
-      new Setting(content).setName(s.filterContentName).setDesc(s.filterContentDesc)
+      new Setting(syncAdvanced).setName(s.filterContentName).setDesc(s.filterContentDesc)
         .addText((text) => text.setValue(settings.titleFilter).onChange(async (value) => {
           settings.titleFilter = value;
-          await this.plugin.saveSettings();
+          this.scopeChanged();
         }));
     }
   }
 
+  openFlowSettings(group: FlowGroup): void {
+    if (!this.flowPanels) return;
+    this.flowModal?.close();
+    const modal = new FlowSettingsModal(this.app, group, this.flowPanels, () => {
+      this.flowModal = undefined;
+      this.updateFlowMap?.();
+    });
+    this.flowModal = modal; modal.open(); this.renderScopeFooter();
+    if (group === "source") void this.refreshIdentitySource();
+  }
+
+  private createScopeSection(parent: HTMLElement, title: string, kind: "source" | "sync" | "save"): HTMLElement {
+    const section = parent.createDiv({ cls: "ima-scope-section", attr: { role: "group", "aria-label": title, "data-scope-group": kind } });
+    new Setting(section).setName(title).setHeading().settingEl.toggleClass("ima-scope-section-title", true);
+    return section.createDiv({ cls: kind === "sync" ? "ima-scope-sync-controls" : "ima-scope-card" });
+  }
+
   private renderSettings(): void {
+    // A clean page follows changes made by other settings or the existing rebind dialog.
+    // An edited page keeps its draft; Save checks the original snapshot before writing.
+    if (this.scopeDraft && !scopeDirty(this.scopeDraft) && scopeFingerprint(this.plugin.settings) !== this.scopeDraft.fingerprint) {
+      this.scopeDraft = createScopeDraft(this.plugin.settings);
+    }
     const s = getStrings(this.plugin.settings.language);
-    const { containerEl } = this;
+    const containerEl = this.renderRoot ?? this.containerEl;
     containerEl.empty();
+    containerEl.addClass("ima-flow-ui"); containerEl.addClass("ima-palette-9");
     this.updateScopeSummary = undefined;
 
     const supportCard = containerEl.createDiv({ cls: "ima-share-sync-support" });
@@ -1145,83 +1750,78 @@ class ImaSpeedSyncSettingTab extends PluginSettingTab {
         }));
 
     const isScopeConfigured = Boolean(
-      this.plugin.settings.knowledgeBaseName.trim() && this.plugin.settings.folderName.trim(),
+      this.plugin.settings.knowledgeBaseName.trim() && (this.plugin.settings.sourceTargetKind === "knowledge-base" || this.plugin.settings.folderName.trim()),
     );
     if (!isScopeConfigured) {
       const scopeTip = panelScope.createDiv({ cls: "ima-scope-empty-tip" });
       const tipIcon = scopeTip.createSpan({ cls: "ima-scope-tip-icon" });
       setIcon(tipIcon, "info");
-      scopeTip.createSpan({ text: s.scopeEmptyTip });
+      scopeTip.createSpan({ text: this.plugin.identityProvider ? "先选择来源，再设置同步范围和保存位置。" : s.scopeEmptyTip });
     }
 
-    new Setting(panelScope)
-      .setName(s.kbName)
-      .setDesc(s.kbDesc)
-      .addText((text) => {
-        this.kbInputEl = text.inputEl;
-        text
-          .setPlaceholder(s.kbPlaceholder)
-          .setValue(this.plugin.settings.knowledgeBaseName)
-          .onChange(async (value) => {
-            this.plugin.settings.knowledgeBaseName = value.trim();
-            await this.plugin.saveSettings();
-          });
-      });
+    this.updateFlowMap = drawFlowMap(panelScope, () => {
+      const values = this.getScopeDraft().values;
+      const parts = [values.knowledgeBaseName, ...sourcePath(values)].filter(Boolean);
+      let destination = values.destinationPath;
+      try { destination = this.plugin.previewScopeDestination(this.getScopeDraft()); } catch { /* Editable draft may be incomplete. */ }
+      return { sourceTitle: parts.at(-1) || "选择来源", sourcePath: parts.slice(0, -1).join(" / ") || "IMA 知识库",
+        sourceWarning: this.plugin.currentSourceProblem || (this.identityError ? this.identityMessage : ""),
+        syncTitle: (values.syncScopeMode ?? "recent") === "all" ? "全部同步" : "仅同步新增",
+        syncDetail: (values.syncScopeMode ?? "recent") === "all" ? "补齐范围内未同步的文件" : "检查最新 " + values.maxItems + " 个，跳过已同步",
+        saveTitle: destination.replace(/\\/g, "/").split("/").filter(Boolean).at(-1) || "选择位置",
+        savePath: "Obsidian · " + destination.replace(/\\/g, "/") };
+    }, group => this.openFlowSettings(group));
+    const staging = panelScope.createDiv({ cls: "ima-flow-staging", attr: { hidden: "" } });
+    const sourceControls = this.createScopeSection(staging, s.sourceSection, "source");
+    const syncControls = this.createScopeSection(staging, s.syncSection, "sync");
+    const saveControls = this.createScopeSection(staging, s.saveSection, "save");
+    const sourceAdvanced = staging.createDiv({ cls: "ima-flow-advanced" });
+    const syncAdvanced = staging.createDiv({ cls: "ima-flow-advanced" });
+    const saveAdvanced = staging.createDiv({ cls: "ima-flow-advanced" });
+    this.flowPanels = { source: { basic: sourceControls, advanced: sourceAdvanced },
+      sync: { basic: syncControls, advanced: syncAdvanced }, save: { basic: saveControls, advanced: saveAdvanced } };
+    const scopeValues = this.getScopeDraft().values;
+    this.renderScopeSource(sourceControls);
 
-    new Setting(panelScope)
-      .setName(s.sourceFolderName)
-      .setDesc(s.sourceFolderDesc)
-      .addText((text) =>
-        text
-          .setPlaceholder(s.sourceFolderPlaceholder)
-          .setValue(this.plugin.settings.folderName)
-          .onChange(async (value) => {
-            this.plugin.settings.folderName = value.trim();
-            this.updateScopeSummary?.();
-            await this.plugin.saveSettings();
-          }),
-      );
+    if (this.plugin.settings.pendingSourceResume) {
+      let description = s.sourceResumeInvalid;
+      try {
+        const pending = this.plugin.getPendingSourceResume();
+        if (pending) description = s.sourceResumeDesc(pending.records.length, pending.unresumableCount);
+      } catch { /* Keep the invalid-batch explanation visible until explicitly discarded. */ }
+      new Setting(syncControls).setName(s.sourceResume).setDesc(description)
+        .addButton((button) => button.setButtonText(s.sourceResume).setDisabled(this.plugin.isRunning)
+          .onClick(() => { void this.plugin.sync(true); }))
+        .addButton((button) => button.setButtonText(s.sourceResumeDiscard).setDisabled(this.plugin.isRunning)
+          .onClick(async () => {
+            try { await this.plugin.discardPendingSourceResume(); }
+            catch (error) { new Notice(error instanceof Error ? error.message : String(error)); }
+          }));
+    }
 
-    new Setting(panelScope)
-      .setName(s.destPathName)
-      .setDesc(s.destPathDesc)
-      .addText((text) =>
-        text
-          .setPlaceholder(s.destPathPlaceholder)
-          .setValue(this.plugin.settings.destinationPath)
-          .onChange(async (value) => {
-            this.plugin.settings.destinationPath = value.trim();
-            await this.plugin.saveSettings();
-          }),
-      );
-
-    new Setting(panelScope)
-      .setName(s.overwriteName)
-      .setDesc(s.overwriteDesc)
-      .addToggle((toggle) =>
-        toggle
-          .setValue(this.plugin.settings.overwriteSameName)
-          .onChange(async (value) => {
-            await this.plugin.setOverwriteSameName(value);
-          }),
-      );
-
+    new Setting(saveControls).setName(s.destPathName)
+      .addText(text => text.setPlaceholder(s.destPathPlaceholder).setValue(scopeValues.destinationPath).setDisabled(this.scopeSaving)
+        .onChange(value => { scopeValues.destinationPath = value; this.updateScopeSummary?.(); this.scopeChanged(); }))
+      .addButton(button => button.setButtonText("选择").setDisabled(this.scopeSaving).onClick(() => this.chooseScope("destination")));
+    new Setting(saveAdvanced).setName(s.overwriteName).setDesc(s.overwriteDesc)
+      .addToggle(toggle => toggle.setValue(scopeValues.overwriteSameName).setDisabled(this.scopeSaving).onChange(value => {
+        scopeValues.overwriteSameName = value; this.scopeChanged();
+      }));
     if (this.plugin.settings.contentMode === "general") {
-      this.renderGeneralScope(panelScope);
+      this.renderGeneralScope(syncControls, sourceControls, saveAdvanced, sourceAdvanced, syncAdvanced, panelScope);
     } else {
-      new Setting(panelScope)
-      .setName(s.maxItemsName)
-      .setDesc(s.maxItemsDesc)
-      .addSlider((slider) =>
-        slider
-          .setLimits(1, 30, 1)
-          .setValue(this.plugin.settings.maxItems)
-          .onChange(async (value) => {
-            this.plugin.settings.maxItems = value;
-            await this.plugin.saveSettings();
-          }),
-      );
+      new Setting(syncControls).setName(s.maxItemsName).setDesc(s.maxItemsDesc)
+        .addSlider(slider => slider.setLimits(1, 30, 1).setValue(scopeValues.maxItems).setDisabled(this.scopeSaving)
+          .onChange(value => { scopeValues.maxItems = value; this.scopeChanged(); }));
     }
+    // Keep the original sync cards/popover. The fieldset locks all settings while committing.
+    panelScope.toggleClass("ima-scope-saving", this.scopeSaving);
+    for (const section of Array.from(panelScope.querySelectorAll(".ima-scope-section"))) {
+      if (this.scopeSaving) section.setAttribute("inert", ""); else section.removeAttribute("inert");
+    }
+    this.scopeFooter = panelScope.createDiv({ cls: "ima-scope-footer" });
+    this.flowModal?.replacePanels(this.flowPanels);
+    this.renderScopeFooter();
 
     new Setting(panelGeneral)
       .setName(s.resetConsentName)
@@ -1319,6 +1919,7 @@ class ImaSpeedSyncSettingTab extends PluginSettingTab {
       cls: "ima-share-sync-settings-version",
       text: s.versionText(this.plugin.manifest.version),
     });
+    silenceHoverHints(containerEl);
   }
 
   updateMarkdownDashboard(): void {
@@ -1446,12 +2047,11 @@ class ImaSpeedSyncSettingTab extends PluginSettingTab {
     const mbSize = (stats.bytes / 1024 / 1024).toFixed(1);
     const autoRate = stats.successRate;
 
-    const isConfigured = Boolean(settings.knowledgeBaseName.trim() && settings.folderName.trim());
+    const isConfigured = Boolean(settings.knowledgeBaseName.trim() && (settings.sourceTargetKind === "knowledge-base" || settings.folderName.trim()));
     const isNeverSynced = totalRuns === 0 && totalSynced === 0;
 
     // 2. DOM 渲染
     const dashWrapper = containerEl.createDiv({ cls: "ima-dashboard-container" });
-    dashWrapper.createDiv({ cls: "ima-dash-section-tip", text: s.dashStatsNote });
 
     // 醒目空状态引导横幅 (Onboarding Empty State)
     if (!isConfigured) {
@@ -1492,10 +2092,9 @@ class ImaSpeedSyncSettingTab extends PluginSettingTab {
     const profile = dashWrapper.createDiv({ cls: "ima-dash-profile" });
     const avatar = profile.createDiv({ cls: "ima-dash-avatar" });
     setIcon(avatar, IMA_SHARE_SYNC_ICON_ID);
-    const kbTitle = settings.knowledgeBaseName.trim() || s.dashProfileUnconfigured;
     profile.createDiv({
-      cls: `ima-dash-title${!settings.knowledgeBaseName.trim() ? " is-placeholder" : ""}`,
-      text: kbTitle,
+      cls: "ima-dash-title",
+      text: "IMA Share Sync",
     });
     const subTitle = profile.createDiv({ cls: "ima-dash-subtitle" });
     subTitle.createSpan({ cls: `ima-dash-status-dot${isNeverSynced ? " is-idle" : ""}` });
@@ -1587,8 +2186,6 @@ class ImaSpeedSyncSettingTab extends PluginSettingTab {
     const monthsRow = heatWrapper.createDiv({ cls: "ima-heat-months" });
     const insightsPanel = heatBody.createDiv({ cls: "ima-heat-insights" });
 
-    const tooltip = heatCard.createDiv({ cls: "ima-heat-tooltip" });
-
     const heatFooter = heatCard.createDiv({ cls: "ima-heat-footer" });
     const summarySpan = heatFooter.createSpan({ cls: "ima-heat-summary" });
 
@@ -1641,26 +2238,7 @@ class ImaSpeedSyncSettingTab extends PluginSettingTab {
         }
         const cell = heatGrid.createDiv({ cls: `ima-heat-cell ima-heat-lv-${level}` });
         const tipText = s.dashHeatTip(dStr, count);
-        cell.setAttr("aria-label", tipText);
-        cell.setAttr("data-tooltip-position", "top");
-        cell.setAttr("title", tipText);
-
-        cell.addEventListener("mouseenter", () => {
-          if (!tooltip || typeof cell.getBoundingClientRect !== "function" || typeof heatCard.getBoundingClientRect !== "function") return;
-          const cardRect = heatCard.getBoundingClientRect();
-          const cellRect = cell.getBoundingClientRect();
-          tooltip.setText(tipText);
-          const relLeft = (cellRect.left - cardRect.left) + cellRect.width / 2;
-          const relTop = (cellRect.top - cardRect.top) - 10;
-          if (tooltip.style) {
-            tooltip.style.left = `${relLeft}px`;
-            tooltip.style.top = `${relTop}px`;
-          }
-          tooltip.toggleClass("is-visible", true);
-        });
-        cell.addEventListener("mouseleave", () => {
-          if (tooltip) tooltip.toggleClass("is-visible", false);
-        });
+        setQuietLabel(cell, tipText);
       }
 
       for (const m of monthNames) {
@@ -1737,6 +2315,11 @@ class ImaSpeedSyncSettingTab extends PluginSettingTab {
 
 export default class ImaSpeedSyncPlugin extends Plugin {
   private settingsTab?: ImaSpeedSyncSettingTab;
+  private sourceHealth?: { key: string; message: string };
+  get currentSourceProblem(): string {
+    const profile = activeProfile(this.settings);
+    return profile && this.sourceHealth?.key === sourceHealthKey(profile) ? this.sourceHealth.message : "";
+  }
   override settings: ImaSpeedSyncSettings = { ...DEFAULT_SETTINGS };
   private running = false;
   private currentProcess: ChildProcess | null = null;
@@ -1755,6 +2338,109 @@ export default class ImaSpeedSyncPlugin extends Plugin {
   private reportSaveFailed = false;
   private operationCards = new Set<DesktopOperationCard>();
   private deferredSyncTimer: number | null = null;
+  private automaticSyncChecking = false;
+  private desktopProbeProcess: ChildProcess | null = null;
+  private sourceRebindSession: SourceRebindSession | null = null;
+  private sourceInspectionRun: SyncRun | null = null;
+  private sourceRebindSaving = false;
+  sourceNeedsRebind: SourceNeedsRebind | null = null;
+  // The Web host replaces this read-only native adapter with isolated scenarios.
+  identityProvider?: IdentityProvider;
+
+  private createDesktopIdentityProvider(run?: SyncRun): DesktopIdentityProvider {
+    return new DesktopIdentityProvider(request => this.runNativeIdentity(request, run), Object.values(this.settings.sourceIdentity?.profiles ?? {}));
+  }
+
+  private silentIdentityCall = runSilentIdentity;
+  private async runNativeIdentity(request: NativeIdentityRequest, parentRun?: SyncRun): Promise<unknown> {
+    if (!request.cacheOnly && !(await this.ensureConsent(true))) throw new SyncCanceledError();
+    if (parentRun) this.assertRunActive(parentRun);
+    const result = await this.silentIdentityCall(request);
+    if (parentRun) this.assertRunActive(parentRun);
+    return result;
+  }
+
+  /** API profiles are migrated only by exact folder identity plus existing article identities. */
+  async resolveActiveIdentity(provider = this.identityProvider): Promise<IdentityChoice> {
+    const profile = activeProfile(this.settings);
+    try {
+      const choice = await this.resolveActiveIdentityUnchecked(provider);
+      this.sourceHealth = undefined;
+      return choice;
+    } catch (error) {
+      if (profile && !(error instanceof SyncCanceledError)) {
+        const message = sourceProblemMessage(error, profile);
+        this.sourceHealth = { key: sourceHealthKey(profile), message };
+        throw Object.assign(new Error(message), { action: "source-settings", code: (error as { code?: string })?.code });
+      }
+      throw error;
+    } finally {
+      this.settingsTab?.sourceHealthChanged();
+    }
+  }
+
+  private async resolveActiveIdentityUnchecked(provider = this.identityProvider): Promise<IdentityChoice> {
+    if (!provider) throw new Error("尚未连接 IMA 客户端。");
+    const profile = activeProfile(this.settings);
+    if (!profile) throw new Error("请先选择同步来源。");
+    if (!(provider instanceof DesktopIdentityProvider) || profile.identityProvider === "desktop-uia") {
+      if (provider instanceof DesktopIdentityProvider) provider.seedProfile(profile);
+      return await verifyIdentity(provider, profile.knowledgeBaseId, profile.folderId);
+    }
+    const oldIds = [...new Set(this.syncedAttachments.filter(item => item.sourceScope === profile.sourceScope).map(item => item.sourceId))];
+    const index = await this.buildArticleIndex(profile.localDestination, true);
+    for (const item of index.metadataByPath.values()) if (item.sourceScope === profile.sourceScope && item.sourceId && !oldIds.includes(item.sourceId)) oldIds.push(item.sourceId);
+    if (!oldIds.length) throw new Error("旧来源尚无可核对的文章身份，原配置已保留。请在来源设置中核对后关联原记录。");
+    const matches: {choice: IdentityChoice; count: number}[] = [];
+    for (const base of await provider.listKnowledgeBases()) {
+      let choice: IdentityChoice;
+      try { choice = await provider.resolve(base.id, profile.folderId); }
+      catch (error) { if ((error as {code?: string}).code === "not-found") continue; throw error; }
+      choice.includeSubfolders = profile.includeSubfolders;
+      const count = await provider.matchRecords(choice, oldIds);
+      if (count > 0) matches.push({ choice, count });
+    }
+    if (matches.length !== 1) throw new Error("旧来源身份尚未唯一核实，原保存位置和同步记录已保留。");
+    const match = matches[0]!;
+    const next = migrateDesktopIdentity(this.settings, match.choice, { previousKnowledgeBaseId: profile.knowledgeBaseId,
+      matchedRecords: match.count, candidateKnowledgeBaseIds: matches.map(item => item.choice.knowledgeBase.id) });
+    await this.persistIdentitySettings(next);
+    provider.seedProfile(activeProfile(next)!);
+    if (this.identityProvider instanceof DesktopIdentityProvider) this.identityProvider.seedProfile(activeProfile(next)!);
+    return match.choice;
+  }
+
+  async persistIdentitySettings(next: ImaSpeedSyncSettings): Promise<void> {
+    const previous = this.settings;
+    const oldProfile = activeProfile(previous), newProfile = activeProfile(next), pending = previous.pendingSourceResume;
+    if (pending && oldProfile && newProfile && oldProfile.folderId === newProfile.folderId &&
+        oldProfile.sourceScope === newProfile.sourceScope && oldProfile.localDestination === newProfile.localDestination &&
+        (oldProfile.knowledgeBaseId === newProfile.knowledgeBaseId || newProfile.legacyKnowledgeBaseIds?.includes(oldProfile.knowledgeBaseId))) {
+      next = { ...next, pendingSourceResume: { ...pending, knowledgeBaseName: next.knowledgeBaseName,
+        folderName: next.folderName, folderPath: [...sourcePath(next)] } };
+    }
+    this.settings = next;
+    try { await this.saveSettings(); }
+    catch (error) { this.settings = previous; throw error; }
+  }
+
+  async saveIdentityOptions(values: ScopeValues): Promise<void> {
+    if (!values.destinationPath.trim()) throw new Error("请填写保存位置。");
+    if (this.settings.pendingSourceResume && (values.destinationPath !== this.settings.destinationPath ||
+      values.includeSourceFolder !== this.settings.includeSourceFolder)) throw new Error("请先处理待补齐记录，再更改保存位置。");
+    await this.persistIdentitySettings(updateIdentityOptions(this.settings, values));
+  }
+
+  async commitIdentityChoice(choice: IdentityChoice, linkLegacy: boolean, matchedRecords: number): Promise<void> {
+    if (!this.identityProvider) throw new Error("尚未连接来源识别服务。");
+    if (this.running || this.settings.pendingSourceResume) throw new Error("请先完成当前同步或待补齐记录，再切换来源。");
+    const verified = await verifyIdentity(this.identityProvider, choice.knowledgeBase.id, choice.folder?.id);
+    verified.includeSubfolders = choice.includeSubfolders;
+    const next = chooseIdentity(this.settings, verified, value => createHash("sha256").update(value, "utf8").digest("hex"), linkLegacy, matchedRecords);
+    await this.persistIdentitySettings(next);
+    this.sourceHealth = undefined;
+    this.settingsTab?.sourceHealthChanged();
+  }
   markdownDashboardState: MarkdownDashboardState = {
     status: "idle",
     total: 0,
@@ -1774,9 +2460,377 @@ export default class ImaSpeedSyncPlugin extends Plugin {
     return this.running;
   }
 
+  getSourceBinding(settings: Readonly<ImaSpeedSyncSettings> = this.settings): SourceBinding | undefined {
+    const binding = restoreSourceBinding(settings.sourceBinding, settings.knowledgeBaseName);
+    return binding && (binding.targetKind ?? "folder") === (settings.sourceTargetKind ?? "folder") ? binding : undefined;
+  }
+
+  private initializeSourceBinding(): boolean {
+    if (this.getSourceBinding() || !this.settings.knowledgeBaseName.trim() || (this.settings.sourceTargetKind !== "knowledge-base" && !this.settings.folderName.trim())) return false;
+    const binding = createSourceBinding(this.settings.knowledgeBaseName, this.settings.folderName,
+      this.getLegacyDestinationPath(this.settings),
+      createHash("sha256").update(this.settings.knowledgeBaseName.trim(), "utf8").digest("hex"), this.settings.sourceTargetKind);
+    if (!binding) return false;
+    this.settings.sourceBinding = binding;
+    return true;
+  }
+
+  updateSourceBindingDestination(): void {
+    const binding = this.getSourceBinding();
+    if (binding) this.settings.sourceBinding = { ...binding, localDestination: this.getLegacyDestinationPath(this.settings) };
+  }
+
+  getPendingSourceResume(settings: Readonly<ImaSpeedSyncSettings> = this.settings): PendingSourceResume | undefined {
+    if (settings.pendingSourceResume === undefined) return undefined;
+    const pending = restorePendingSourceResume(settings.pendingSourceResume);
+    if (!pending) throw new Error(getStrings().sourceResumeInvalid);
+    return pending;
+  }
+
+  private assertPendingSourceContext(pending: PendingSourceResume, settings: Readonly<ImaSpeedSyncSettings>): void {
+    if (pending.sourceScope !== this.createSourceScope(settings) ||
+      pending.localDestination !== this.getEffectiveDestinationPath(settings) ||
+      pending.knowledgeBaseName !== settings.knowledgeBaseName.trim() || pending.folderName !== settings.folderName.trim() ||
+      (pending.targetKind ?? "folder") !== (settings.sourceTargetKind ?? "folder") ||
+      JSON.stringify(pending.folderPath ?? (pending.folderName ? [pending.folderName] : [])) !== JSON.stringify(sourcePath(settings))) {
+      throw new Error(getStrings().sourceResumeInvalid);
+    }
+  }
+
+  async discardPendingSourceResume(): Promise<void> {
+    if (this.running || this.sourceRebindSession || this.sourceRebindSaving) throw new Error(getStrings().sourceRebindBusy);
+    const previous = this.settings.pendingSourceResume;
+    delete this.settings.pendingSourceResume;
+    try { await this.saveSettings(); }
+    catch (error) { this.settings.pendingSourceResume = previous; throw error; }
+    this.settingsTab?.refreshSourceSettings();
+  }
+
+  private capturePendingSourceResume(result: ExtractionResult, settings: Readonly<ImaSpeedSyncSettings>, previous?: PendingSourceResume): void {
+    if (previous) {
+      // Downloads are not durable vault imports. Keep every original target until the
+      // post-import ledger confirms its file exists, including canceled/failed saves.
+      this.settings.pendingSourceResume = previous;
+      return;
+    }
+    if (!result.sourceNeedsRebind) return;
+    const records = result.sourcePendingRecords ?? [];
+    const unresumableCount = result.sourcePendingUnresumableCount ?? 0;
+    if (!records.length && !unresumableCount) return;
+    this.settings.pendingSourceResume = { version: 1,
+      sourceScope: this.createSourceScope(settings), localDestination: this.getEffectiveDestinationPath(settings),
+      knowledgeBaseName: settings.knowledgeBaseName.trim(), folderName: settings.folderName.trim(),
+      ...(settings.sourceFolderPath ? { folderPath: [...settings.sourceFolderPath] } : {}),
+      ...(settings.sourceTargetKind === "knowledge-base" ? { targetKind: "knowledge-base" as const } : {}),
+      records: records.map((record) => ({ ...record, relativeFolder: [...record.relativeFolder],
+        ...(record.relativeFolderIds ? { relativeFolderIds: [...record.relativeFolderIds] } : {}) })), unresumableCount };
+  }
+
+  private async persistPendingSourceResume(): Promise<void> {
+    const pending = this.getPendingSourceResume();
+    if (!pending) return;
+    this.assertPendingSourceContext(pending, this.settings);
+    const index = await this.buildArticleIndex(pending.localDestination, true);
+    const savedIds = new Set(this.getExistingSourceIds(index, this.settings));
+    const remaining = pending.records.filter((record) => !savedIds.has(record.sourceId));
+    if (remaining.length || pending.unresumableCount) this.settings.pendingSourceResume = { ...pending, records: remaining };
+    else delete this.settings.pendingSourceResume;
+    await this.saveSettings();
+  }
+
+  beginSourceRebind(): SourceRebindSession {
+    if (this.running || this.sourceRebindSession || this.unloaded) throw new Error(getStrings().sourceRebindBusy);
+    const binding = this.getSourceBinding() ?? createSourceBinding(this.settings.knowledgeBaseName,
+      this.settings.folderName, this.getEffectiveDestinationPath(), this.createSourceScope(this.settings), this.settings.sourceTargetKind);
+    if (!binding) throw new Error(getStrings().sourceRebindChanged);
+    const session: SourceRebindSession = {
+      knowledgeBaseName: binding.knowledgeBaseName, originalFolderName: this.settings.folderName.trim(),
+      localDestination: binding.localDestination, sourceScope: binding.sourceScope,
+      candidateName: this.settings.folderName.trim(), candidateKnowledgeBaseName: binding.knowledgeBaseName, revision: 0,
+      originalTargetKind: this.settings.sourceTargetKind, candidateTargetKind: this.settings.sourceTargetKind,
+      originalFolderPath: this.settings.sourceFolderPath, candidateFolderPath: this.settings.sourceFolderPath,
+    };
+    this.sourceRebindSession = session;
+    return session;
+  }
+
+  beginScopeSelection(values: ScopeValues): SourceRebindSession {
+    if (this.running || this.sourceRebindSession || this.sourceRebindSaving || this.unloaded) throw new Error(getStrings().sourceRebindBusy);
+    const session: SourceRebindSession = {
+      knowledgeBaseName: this.settings.knowledgeBaseName.trim(), originalFolderName: this.settings.folderName.trim(),
+      originalFolderPath: this.settings.sourceFolderPath ? [...this.settings.sourceFolderPath] : undefined,
+      localDestination: this.getEffectiveDestinationPath(), sourceScope: this.createSourceScope(this.settings),
+      originalTargetKind: this.settings.sourceTargetKind, candidateTargetKind: values.sourceTargetKind,
+      candidateName: values.sourceTargetKind === "knowledge-base" ? "" : values.folderName.trim(),
+      candidateFolderPath: values.sourceTargetKind === "knowledge-base" ? undefined : values.sourceFolderPath ? [...values.sourceFolderPath] : undefined,
+      candidateKnowledgeBaseName: values.knowledgeBaseName.trim(), revision: 0, selection: true, preserveIdentity: false,
+    };
+    this.sourceRebindSession = session;
+    return session;
+  }
+
+  async saveScopeDraft(input: ScopeDraft): Promise<void> {
+    if (scopeFingerprint(this.settings) !== input.fingerprint) throw new Error("设置已在其他位置更改，请撤销草稿后重新选择。");
+    const draft = { ...input, values: scopeValues(input.values), original: scopeValues(input.original) };
+    draft.values.knowledgeBaseName = draft.values.knowledgeBaseName.trim();
+    draft.values.folderName = draft.values.sourceTargetKind === "knowledge-base" ? "" : draft.values.folderName.trim();
+    if (draft.values.sourceTargetKind === "knowledge-base") delete draft.values.sourceFolderPath;
+    draft.values.destinationPath = draft.values.destinationPath.trim();
+    this.validateSettings({ ...this.settings, ...draft.values });
+    const session = this.beginScopeSelection(draft.values);
+    session.preserveIdentity = draft.preserveIdentity;
+    try {
+      if (!sameSource(draft.original, draft.values)) {
+        await this.inspectSourceFolder(session);
+        await this.confirmSourceBinding(session, draft);
+      } else {
+        await this.persistScopeDraft(draft, this.getSourceBinding(), this.getPendingSourceResume());
+      }
+    } finally { this.cancelSourceRebind(session); }
+    this.refreshView();
+  }
+
+  previewScopeDestination(draft: ScopeDraft): string {
+    return draft.values.destinationPath === draft.original.destinationPath && draft.values.includeSourceFolder === draft.original.includeSourceFolder
+      ? this.getEffectiveDestinationPath() : this.getLegacyDestinationPath({ ...this.settings, ...draft.values });
+  }
+
+  private applyScopeValues(values: ScopeValues, binding?: SourceBinding, pending?: PendingSourceResume): void {
+    Object.assign(this.settings, values);
+    for (const key of scopeKeys) if (values[key] === undefined) delete (this.settings as unknown as Record<string, unknown>)[key];
+    if (binding) this.settings.sourceBinding = binding; else delete this.settings.sourceBinding;
+    if (pending) this.settings.pendingSourceResume = pending; else delete this.settings.pendingSourceResume;
+  }
+
+  private async persistScopeDraft(draft: ScopeDraft, binding?: SourceBinding, pending?: PendingSourceResume): Promise<void> {
+    if (scopeFingerprint(this.settings) !== draft.fingerprint) throw new Error("设置已在其他位置更改，请撤销草稿后重新选择。");
+    const next = { ...this.settings, ...scopeValues(draft.values), sourceBinding: binding };
+    if (binding && (draft.values.destinationPath !== draft.original.destinationPath || draft.values.includeSourceFolder !== draft.original.includeSourceFolder)) {
+      next.sourceBinding = { ...binding, localDestination: this.getLegacyDestinationPath(next) };
+    }
+    const destination = this.validateSettings(next);
+    if (pending && destination !== pending.localDestination) throw new Error("还有待补齐的同步记录，请先完成或放弃该批次，再更改保存位置。");
+    const previous = { ...scopeValues(this.settings), sourceBinding: this.settings.sourceBinding, pendingSourceResume: this.settings.pendingSourceResume };
+    this.sourceRebindSaving = true;
+    try {
+      this.applyScopeValues(scopeValues(next), next.sourceBinding, pending);
+      await this.saveSettings();
+    } catch (error) { this.applyScopeValues(previous, previous.sourceBinding, previous.pendingSourceResume); throw error; }
+    finally { this.sourceRebindSaving = false; }
+  }
+
+  openSourceSelection(targetKind?: SourceTargetKind): void {
+    try {
+      if (this.running || this.sourceRebindSession || this.unloaded) throw new Error(getStrings().sourceRebindBusy);
+      const binding = this.getSourceBinding();
+      const session: SourceRebindSession = {
+        knowledgeBaseName: this.settings.knowledgeBaseName.trim(), originalFolderName: this.settings.folderName.trim(),
+        localDestination: this.getEffectiveDestinationPath(), sourceScope: this.createSourceScope(this.settings),
+        originalTargetKind: this.settings.sourceTargetKind,
+        originalFolderPath: this.settings.sourceFolderPath, candidateFolderPath: this.settings.sourceFolderPath,
+        candidateTargetKind: targetKind ?? this.settings.sourceTargetKind,
+        candidateName: (targetKind ?? this.settings.sourceTargetKind) === "knowledge-base" ? "" : this.settings.folderName.trim(),
+        candidateKnowledgeBaseName: binding?.knowledgeBaseName ?? this.settings.knowledgeBaseName.trim(),
+        revision: 0, selection: true, preserveIdentity: false,
+      };
+      this.sourceRebindSession = session;
+      new SourceSelectionModal(this, session).open();
+    } catch (error) { new Notice(error instanceof Error ? error.message : String(error)); }
+  }
+
+  setSourceSelectionKind(session: SourceRebindSession, kind: SourceTargetKind): void {
+    this.assertSourceRebindCurrent(session);
+    if (this.running || this.sourceRebindSaving || !["folder", "knowledge-base"].includes(kind)) throw new Error(getStrings().sourceRebindBusy);
+    session.candidateTargetKind = kind;
+    this.setSourceRebindCandidate(session, "");
+  }
+
+  setSourceSelectionIdentity(session: SourceRebindSession, preserve: boolean): void {
+    this.assertSourceRebindCurrent(session);
+    if (this.running || this.sourceRebindSaving) throw new Error(getStrings().sourceRebindBusy);
+    session.preserveIdentity = preserve;
+    this.setSourceRebindCandidate(session, session.candidateName);
+  }
+
+  async readSourceCatalog(session: SourceRebindSession, kind: "knowledge-bases" | "folders", parentPath: string[] = []): Promise<SourceCatalog> {
+    this.assertSourceRebindCurrent(session);
+    if (this.running || this.sourceRebindSaving) throw new Error(getStrings().sourceRebindBusy);
+    const revision = ++session.revision;
+    session.inspection = undefined;
+    const candidate = session.candidateKnowledgeBaseName;
+    if (kind === "folders" && !candidate) throw new Error(getStrings().sourceCatalogChooseKnowledgeBase);
+    const run: SyncRun = { id: this.nextRunId++, cancellationPath: null, cancellationRequested: false, process: null };
+    this.activeRun = run; this.sourceInspectionRun = run; this.running = true;
+    try {
+      if (!(await this.ensureConsent(true))) throw new SyncCanceledError();
+      this.assertRunActive(run);
+      const settings = Object.freeze({ ...this.settings, knowledgeBaseName: candidate, sourceCatalogPath: [...parentPath] });
+      const result = this.parseExtractionResult(await this.runPowerShell(1, [], settings, run, [], kind === "folders" ? "list-source-folders" : "list-knowledge-bases"));
+      this.assertRunActive(run); this.assertSourceRebindCurrent(session);
+      if (session.revision !== revision || session.candidateKnowledgeBaseName !== candidate) throw new Error(getStrings().sourceRebindChanged);
+      const catalog = result.sourceCatalog;
+      if (result.busy || result.locked || result.canceled || result.errors?.length || result.items?.length || !isSourceCatalog(catalog) ||
+        catalog.kind !== kind || (kind === "folders" && (catalog.knowledgeBaseName !== candidate || !catalog.complete || JSON.stringify(catalog.parentPath ?? []) !== JSON.stringify(parentPath)))) {
+        throw new Error(result.errors?.[0]?.message ?? getStrings().sourceCatalogFailed);
+      }
+      return catalog;
+    } finally {
+      if (run.stagingDirectory) await rm(run.stagingDirectory, { recursive: true, force: true }).catch((error) => console.error("清理来源读取目录失败", error));
+      if (this.activeRun === run) {
+        this.activeRun = null; this.running = false; this.currentProcess = null;
+        this.cancellationPath = null; this.cancellationRequested = false;
+      }
+      if (this.sourceInspectionRun === run) this.sourceInspectionRun = null;
+    }
+  }
+
+  openSourceRebind(): void {
+    try { new SourceRebindModal(this, this.beginSourceRebind()).open(); }
+    catch (error) { new Notice(error instanceof Error ? error.message : String(error)); }
+  }
+
+  private assertSourceRebindCurrent(session: SourceRebindSession): void {
+    if (this.unloaded || this.sourceRebindSession !== session ||
+      this.settings.knowledgeBaseName.trim() !== session.knowledgeBaseName ||
+      this.settings.folderName.trim() !== session.originalFolderName ||
+      JSON.stringify(this.settings.sourceFolderPath) !== JSON.stringify(session.originalFolderPath) ||
+      (this.settings.sourceTargetKind ?? "folder") !== (session.originalTargetKind ?? "folder") ||
+      this.getEffectiveDestinationPath() !== session.localDestination ||
+      this.createSourceScope(this.settings) !== session.sourceScope) throw new Error(getStrings().sourceRebindChanged);
+  }
+
+  setSourceRebindCandidate(session: SourceRebindSession, name: string): void {
+    this.assertSourceRebindCurrent(session);
+    if (this.sourceRebindSaving) throw new Error(getStrings().sourceRebindBusy);
+    session.candidateName = name.trim();
+    session.candidateFolderPath = name.trim() && session.candidateFolderPath
+      ? [...session.candidateFolderPath.slice(0, -1), name.trim()] : undefined;
+    session.revision++;
+    session.inspection = undefined;
+    if (this.sourceInspectionRun) void this.cancelSync().catch((error) => console.error("取消来源检查失败", error));
+  }
+
+  setSourceRebindKnowledgeBase(session: SourceRebindSession, name: string): void {
+    this.assertSourceRebindCurrent(session);
+    if (this.sourceRebindSaving) throw new Error(getStrings().sourceRebindBusy);
+    session.candidateKnowledgeBaseName = name.trim();
+    this.setSourceRebindCandidate(session, session.candidateName);
+  }
+
+  async inspectSourceFolder(session: SourceRebindSession): Promise<SourceInspection> {
+    this.assertSourceRebindCurrent(session);
+    if (this.running || this.sourceRebindSaving) throw new Error(getStrings().sourceRebindBusy);
+    if ((!session.candidateName && session.candidateTargetKind !== "knowledge-base") || !session.candidateKnowledgeBaseName) throw new Error(getStrings().sourceRebindChanged);
+    const revision = ++session.revision;
+    session.inspection = undefined;
+    const candidate = session.candidateTargetKind === "knowledge-base" ? "" : session.candidateName;
+    const candidateKnowledgeBase = session.candidateKnowledgeBaseName;
+    const run: SyncRun = { id: this.nextRunId++, cancellationPath: null, cancellationRequested: false, process: null };
+    this.activeRun = run;
+    this.sourceInspectionRun = run;
+    this.running = true;
+    try {
+      if (!(await this.ensureConsent(true))) throw new SyncCanceledError();
+      this.assertRunActive(run);
+      const settings = Object.freeze({ ...this.settings, knowledgeBaseName: candidateKnowledgeBase, folderName: candidate, sourceTargetKind: session.candidateTargetKind ?? "folder", sourceFolderPath: session.candidateFolderPath });
+      const result = this.parseExtractionResult(await this.runPowerShell(1, [], settings, run, [], "inspect-source"));
+      this.assertRunActive(run);
+      this.assertSourceRebindCurrent(session);
+      if (revision !== session.revision || candidate !== session.candidateName || candidateKnowledgeBase !== session.candidateKnowledgeBaseName) throw new Error(getStrings().sourceRebindChanged);
+      const inspection = result.sourceInspection;
+      if (result.sourceNeedsRebind) throw new Error(result.sourceNeedsRebind.message);
+      if (result.busy || result.locked || result.canceled || result.errors?.length || result.items?.length ||
+        !isSourceInspection(inspection) || inspection.knowledgeBaseName !== candidateKnowledgeBase ||
+        inspection.folderName !== candidate || JSON.stringify(inspection.folderPath ?? (candidate ? [candidate] : [])) !== JSON.stringify(session.candidateFolderPath ?? (candidate ? [candidate] : [])) || (inspection.targetKind ?? "folder") !== (session.candidateTargetKind ?? "folder")) {
+        throw new Error(result.errors?.[0]?.message ?? getStrings().sourceRebindChanged);
+      }
+      session.inspection = { ...inspection, breadcrumb: [...inspection.breadcrumb] };
+      return session.inspection;
+    } finally {
+      if (run.stagingDirectory) await rm(run.stagingDirectory, { recursive: true, force: true }).catch((error) => console.error("清理来源检查暂存文件失败", error));
+      if (this.activeRun === run) {
+        this.activeRun = null;
+        this.running = false;
+        this.currentProcess = null;
+        this.cancellationPath = null;
+        this.cancellationRequested = false;
+      }
+      if (this.sourceInspectionRun === run) this.sourceInspectionRun = null;
+    }
+  }
+
+  async confirmSourceBinding(session: SourceRebindSession, draft?: ScopeDraft): Promise<void> {
+    this.assertSourceRebindCurrent(session);
+    if (this.running || this.sourceRebindSaving) throw new Error(getStrings().sourceRebindBusy);
+    if (!session.inspection || session.inspection.folderName !== session.candidateName ||
+      session.inspection.knowledgeBaseName !== session.candidateKnowledgeBaseName ||
+      (session.inspection.targetKind ?? "folder") !== (session.candidateTargetKind ?? "folder")) throw new Error(getStrings().sourceRebindChanged);
+    const binding = createSourceBinding(session.knowledgeBaseName, session.originalFolderName,
+      session.localDestination, session.sourceScope, session.originalTargetKind ?? "folder") ?? { version: 1 as const, knowledgeBaseName: session.knowledgeBaseName, remoteFolderName: session.originalFolderName, localDestination: session.localDestination, sourceScope: session.sourceScope };
+    const nextBinding = rebindSource(binding, session.inspection);
+    if (session.selection && !session.preserveIdentity && session.candidateKnowledgeBaseName !== session.knowledgeBaseName) {
+      nextBinding.sourceScope = createHash("sha256").update(session.candidateKnowledgeBaseName, "utf8").digest("hex");
+    }
+    const previousFolder = this.settings.folderName;
+    const previousFolderPath = this.settings.sourceFolderPath;
+    const previousTargetKind = this.settings.sourceTargetKind;
+    const previousKnowledgeBase = this.settings.knowledgeBaseName;
+    const previousBinding = this.settings.sourceBinding;
+    const previousPending = this.settings.pendingSourceResume;
+    const pending = this.getPendingSourceResume();
+    if (pending) {
+      this.assertPendingSourceContext(pending, this.settings);
+      if ((nextBinding.targetKind ?? "folder") !== (pending.targetKind ?? "folder") ||
+        nextBinding.sourceScope !== pending.sourceScope || (session.selection && !session.preserveIdentity && (nextBinding.remoteFolderName !== previousFolder || JSON.stringify(nextBinding.folderPath ?? [nextBinding.remoteFolderName]) !== JSON.stringify(previousFolderPath ?? [previousFolder])))) {
+        throw new Error(getStrings().sourceSelectionPending);
+      }
+    }
+    if (draft) {
+      await this.persistScopeDraft(draft, nextBinding, pending ? { ...pending,
+        knowledgeBaseName: nextBinding.knowledgeBaseName, folderName: nextBinding.remoteFolderName,
+        folderPath: nextBinding.folderPath } : undefined);
+      this.sourceNeedsRebind = null; this.sourceRebindSession = null;
+      return;
+    }
+    this.sourceRebindSaving = true;
+    try {
+      this.settings.folderName = nextBinding.remoteFolderName;
+      this.settings.sourceFolderPath = nextBinding.folderPath;
+      this.settings.sourceTargetKind = nextBinding.targetKind ?? "folder";
+      this.settings.knowledgeBaseName = nextBinding.knowledgeBaseName;
+      this.settings.sourceBinding = nextBinding;
+      if (pending) this.settings.pendingSourceResume = { ...pending,
+        knowledgeBaseName: nextBinding.knowledgeBaseName, folderName: nextBinding.remoteFolderName, folderPath: nextBinding.folderPath };
+      await this.saveSettings();
+    } catch (error) {
+      this.settings.folderName = previousFolder;
+      this.settings.sourceFolderPath = previousFolderPath;
+      this.settings.sourceTargetKind = previousTargetKind;
+      this.settings.knowledgeBaseName = previousKnowledgeBase;
+      this.settings.sourceBinding = previousBinding;
+      this.settings.pendingSourceResume = previousPending;
+      throw error;
+    } finally {
+      this.sourceRebindSaving = false;
+    }
+    this.sourceNeedsRebind = null;
+    this.sourceRebindSession = null;
+    this.settingsTab?.refreshSourceSettings();
+    this.refreshView();
+  }
+
+  cancelSourceRebind(session: SourceRebindSession): void {
+    if (this.sourceRebindSession !== session || this.sourceRebindSaving) return;
+    session.revision++;
+    session.inspection = undefined;
+    this.sourceRebindSession = null;
+    if (this.sourceInspectionRun) void this.cancelSync().catch((error) => console.error("取消来源检查失败", error));
+  }
+
   override async onload(): Promise<void> {
     this.unloaded = false;
     addIcon(IMA_SHARE_SYNC_ICON_ID, IMA_SHARE_SYNC_ICON_SVG);
+    registerFlowIcon();
     const stored = (await this.loadData()) as (Partial<ImaSpeedSyncSettings> & { syncReports?: unknown; syncedAttachments?: unknown }) | null;
     const { syncReports, syncedAttachments, ...saved } = stored ?? {};
     this.syncedAttachments = Array.isArray(syncedAttachments) ? syncedAttachments.filter((entry: unknown): entry is SyncedAttachment => {
@@ -1792,6 +2846,7 @@ export default class ImaSpeedSyncPlugin extends Plugin {
       contentMode: saved.contentMode ?? (stored ? "speed-reader" : "general"),
       // Do not silently expand the scope of an existing general-mode installation.
       includeSubfolders: typeof saved.includeSubfolders === "boolean" ? saved.includeSubfolders : saved.contentMode === "general" ? false : true,
+      sourceTargetKind: saved.sourceTargetKind === "knowledge-base" ? "knowledge-base" : "folder",
       includeSourceFolder: typeof saved.includeSourceFolder === "boolean" ? saved.includeSourceFolder : (stored ? false : true),
       maxFolders: saved.maxFolders ?? DEFAULT_SETTINGS.maxFolders,
       // Preserve an explicit old opt-out instead of enabling traversal on upgrade.
@@ -1801,11 +2856,18 @@ export default class ImaSpeedSyncPlugin extends Plugin {
       generalSelectionMode: saved.generalSelectionMode ?? (stored ? "per-folder" : "total"),
       syncScopeMode: saved.syncScopeMode ?? "recent",
     };
+    this.identityProvider = this.createDesktopIdentityProvider();
     this.settings.includeSubfolders = this.settings.maxFolderDepth > 0 &&
       (this.settings.generalSelectionMode !== "total" || saved.includeSubfolders !== false);
     for (const key of ["notificationsEnabled", "notifyAutoSuccess", "notifyAutoFailure", "notifyManualResult", "showErrorBadge", "showOperationBefore", "showOperationAfter"] as const) {
       if (typeof this.settings[key] !== "boolean") this.settings[key] = DEFAULT_SETTINGS[key];
     }
+
+    // Freeze the existing effective directory and legacy scope before remote labels change.
+    // No attachment, article metadata, or sync history is rewritten during migration.
+    try {
+      if (this.initializeSourceBinding()) await this.saveSettings();
+    } catch (error) { console.error("保存来源绑定失败，原文件和同步记录未改动", error); }
 
     const s = getStrings();
     this.settingsTab = new ImaSpeedSyncSettingTab(this.app, this);
@@ -1837,7 +2899,7 @@ export default class ImaSpeedSyncPlugin extends Plugin {
         if (this.settings.autoSync && this.settings.hasConsented) {
           window.setTimeout(() => {
             if (!this.unloaded && this.settings.autoSync && this.settings.hasConsented) {
-              void this.sync(false);
+              void this.tryAutomaticSync();
             }
           }, 10000);
         }
@@ -1854,7 +2916,7 @@ export default class ImaSpeedSyncPlugin extends Plugin {
           ) {
             window.clearTimeout(this.deferredSyncTimer);
             this.deferredSyncTimer = null;
-            void this.sync(false);
+            void this.tryAutomaticSync();
           }
         });
       }
@@ -1863,6 +2925,7 @@ export default class ImaSpeedSyncPlugin extends Plugin {
 
   override onunload(): void {
     this.unloaded = true;
+    this.desktopProbeProcess?.kill();
     this.activeNotice?.notice.hide();
     this.activeNotice = null;
     if (this.deferredSyncTimer !== null) window.clearTimeout(this.deferredSyncTimer);
@@ -1914,10 +2977,11 @@ export default class ImaSpeedSyncPlugin extends Plugin {
     const notice = new Notice(message, duration);
     this.activeNotice = { notice, interactive, failed };
     if (report) {
-      const detailsButton = notice.messageEl.createEl("button", { text: "查看详情", cls: "ima-share-sync-notice-details" });
+      const detailsButton = notice.messageEl.createEl("button", { text: report.action === "source-settings" ? "检查来源" : "查看详情", cls: "ima-share-sync-notice-details" });
       detailsButton.addEventListener("click", () => {
         notice.hide();
-        this.openSyncHistory([report]);
+        if (report.action === "source-settings") this.openSourceSettings();
+        else this.openSyncHistory([report]);
       });
     }
   }
@@ -1929,7 +2993,7 @@ export default class ImaSpeedSyncPlugin extends Plugin {
     }
     const showBadge = this.settings.notificationsEnabled && this.settings.showErrorBadge && this.hasUnreadSyncFailure();
     this.ribbonEl?.toggleClass("ima-share-sync-has-warning", showBadge);
-    this.ribbonEl?.setAttr("aria-label", showBadge ? "IMA Share Sync：有未读异常，点击查看记录" : "打开 IMA Share Sync");
+    if (this.ribbonEl) setQuietLabel(this.ribbonEl, showBadge ? "IMA Share Sync：有未读异常，点击查看记录" : "打开 IMA Share Sync");
     if (!this.settings.notificationsEnabled || !this.settings.showOperationAfter) {
       for (const card of this.operationCards) {
         if (card !== this.activeRun?.card) void card.dispose();
@@ -1955,7 +3019,7 @@ export default class ImaSpeedSyncPlugin extends Plugin {
       for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE)) {
         if (leaf.view instanceof ImaSpeedSyncView) leaf.view.showHome();
       }
-    });
+    }, () => this.openSourceSettings());
     const panel = this.historyPanel;
     const existing = this.app.workspace.getLeavesOfType(VIEW_TYPE)[0];
     if (existing?.view instanceof ImaSpeedSyncView) existing.view.showHistory(panel);
@@ -1995,6 +3059,7 @@ export default class ImaSpeedSyncPlugin extends Plugin {
       status.createSpan({ text: `最近：${latest.status === "failed" ? "有异常" : latest.status === "canceled" ? "已取消" : "已完成"}`, cls: "ima-share-sync-latest-status" });
       if (latest.status === "failed") {
         status.createEl("button", { text: "查看本次异常" }).addEventListener("click", () => this.openSyncHistory([latest]));
+        if (latest.action === "source-settings") status.createEl("button", { text: "检查来源" }).addEventListener("click", () => this.openSourceSettings());
       }
       if (this.reportSaveFailed) status.createEl("p", { text: "同步记录未能写入配置文件，本次结果仅在当前会话保留。" });
     }
@@ -2072,12 +3137,67 @@ export default class ImaSpeedSyncPlugin extends Plugin {
     });
   }
 
-  private scheduleDeferredSync(interactive: boolean, maxItems?: number): void {
+  private async checkDesktopReady(): Promise<boolean> {
+    let directory: string | undefined;
+    try {
+      directory = await mkdtemp(path.join(os.tmpdir(), "ima-desktop-check-"));
+      const scriptPath = await this.writeRuntimeScript(directory);
+      if (this.unloaded) return false;
+      return await new Promise<boolean>((resolve) => {
+        let output = "";
+        let settled = false;
+        const child = spawn(windowsPowerShellPath(), ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", scriptPath, "-CheckDesktop"],
+          { windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
+        this.desktopProbeProcess = child;
+        const finish = (ready: boolean): void => {
+          if (settled) return;
+          settled = true;
+          window.clearTimeout(timer);
+          resolve(ready);
+        };
+        const timer = window.setTimeout(() => { child.kill(); finish(false); }, 10000);
+        child.stdout?.setEncoding?.("utf8");
+        child.stdout?.on("data", (chunk: Buffer | string) => { output = (output + String(chunk)).slice(-1024); });
+        child.stderr?.on("data", () => undefined);
+        child.once("error", () => finish(false));
+        child.once("close", (code) => {
+          try {
+            const result: unknown = JSON.parse(output.trim());
+            finish(code === 0 && !!result && typeof result === "object" && "desktopReady" in result && result.desktopReady === true);
+          } catch { finish(false); }
+        });
+      });
+    } catch { return false; }
+    finally {
+      this.desktopProbeProcess = null;
+      if (directory) await rm(directory, { recursive: true, force: true, maxRetries: 3 }).catch(() => undefined);
+    }
+  }
+
+  private async tryAutomaticSync(maxItems?: number): Promise<void> {
+    if (this.unloaded || this.running || this.automaticSyncChecking || !this.settings.autoSync || !this.settings.hasConsented) return;
+    this.automaticSyncChecking = true;
+    try {
+      const ready = await this.checkDesktopReady().catch(() => false);
+      if (this.unloaded || this.running || !this.settings.autoSync || !this.settings.hasConsented) return;
+      if (!ready) {
+        // Waiting is not a failed sync: no desktop card, source read, vault write or report.
+        this.scheduleDeferredSync(false, maxItems, 30000);
+        return;
+      }
+      await this.sync(false, maxItems);
+    } finally { this.automaticSyncChecking = false; }
+  }
+
+  private scheduleDeferredSync(interactive: boolean, maxItems?: number, delay = 5 * 60 * 1000): void {
     if (this.deferredSyncTimer !== null) window.clearTimeout(this.deferredSyncTimer);
     this.deferredSyncTimer = window.setTimeout(() => {
       this.deferredSyncTimer = null;
-      if (!this.unloaded && !this.running) void this.sync(interactive, maxItems);
-    }, 5 * 60 * 1000);
+      if (!this.unloaded && !this.running) {
+        if (interactive) void this.sync(true, maxItems);
+        else void this.tryAutomaticSync(maxItems);
+      }
+    }, delay);
   }
 
   async setOverwriteSameName(value: boolean): Promise<void> {
@@ -2102,6 +3222,12 @@ export default class ImaSpeedSyncPlugin extends Plugin {
     await this.writeCancellationMarker(run);
     if (run.card) await run.card.stop();
     else this.notifyManual("正在取消 IMA Share Sync…", 3000);
+  }
+
+  openSourceSettings(): void {
+    this.openSettings();
+    this.settingsTab?.switchTab("scope");
+    this.settingsTab?.openFlowSettings("source");
   }
 
   openSettings(): void {
@@ -2268,7 +3394,13 @@ export default class ImaSpeedSyncPlugin extends Plugin {
   }
 
   async sync(interactive: boolean, maxItems?: number): Promise<void> {
-    if (this.running) {
+    // A suspended batch is resumed only by an explicit manual action.
+    if (!interactive && this.settings.pendingSourceResume !== undefined) return;
+    if (this.settings.sourceIdentity?.rangeReviewRequired) {
+      if (interactive) this.notifyManual("请在“同步与保存”中确认同步范围，并关闭范围提醒。");
+      return;
+    }
+    if (this.running || this.sourceRebindSession) {
       if (interactive) this.notifyManual("IMA Share Sync 正在运行，请稍候。");
       return;
     }
@@ -2283,7 +3415,7 @@ export default class ImaSpeedSyncPlugin extends Plugin {
     for (const card of this.operationCards) void card.dispose();
     this.operationCards.clear();
 
-    const settings = Object.freeze({
+    let settings = Object.freeze({
       ...this.settings,
       maxItems: maxItems ?? this.settings.maxItems,
     });
@@ -2301,12 +3433,32 @@ export default class ImaSpeedSyncPlugin extends Plugin {
     this.refreshView();
     const counts: Record<SaveStatus, number> = { created: 0, updated: 0, unchanged: 0, skipped: 0, conflict: 0 };
     const issues: ExtractionError[] = [];
+    let pendingResume: PendingSourceResume | undefined;
+    let resumeAlreadySaved = 0;
     try {
       if (!(await this.ensureConsent(interactive))) {
         await this.recordSyncReport({ finishedAt: Date.now(), interactive, status: "canceled", summary: "未开始：尚未授权。", errors: [] }, false);
         return;
       }
       this.assertRunActive(run);
+      const profile = activeProfile(settings);
+      if (!profile && this.identityProvider instanceof DesktopIdentityProvider) throw new Error("请先在“同步与保存”中选择并确认来源，原保存位置和记录已保留。");
+      if (profile) {
+        const provider = this.identityProvider instanceof DesktopIdentityProvider
+          ? this.createDesktopIdentityProvider(run) : this.identityProvider;
+        if (!provider) throw new Error("来源识别服务尚未连接，未开始同步。");
+        const current = await this.resolveActiveIdentity(provider);
+        this.assertRunActive(run);
+        const refreshed = refreshIdentityLabels(this.settings, current);
+        if (JSON.stringify(refreshed) !== JSON.stringify(this.settings)) await this.persistIdentitySettings(refreshed);
+        settings = Object.freeze({ ...refreshIdentityLabels({ ...settings, sourceIdentity: this.settings.sourceIdentity, pendingSourceResume: this.settings.pendingSourceResume }, current), maxItems: settings.maxItems });
+      }
+      if (this.initializeSourceBinding()) await this.saveSettings();
+      pendingResume = this.getPendingSourceResume(settings);
+      if (pendingResume) {
+        this.assertPendingSourceContext(pendingResume, settings);
+        if (!pendingResume.records.length) throw new Error(getStrings().sourceResumeUnidentified);
+      }
       const destinationPath = this.validateSettings(settings);
       run.destination = destinationPath;
       run.metrics = { checked: 0, saved: 0 };
@@ -2317,7 +3469,29 @@ export default class ImaSpeedSyncPlugin extends Plugin {
       const skipTitles = settings.overwriteSameName
         ? []
         : settings.contentMode === "speed-reader" ? this.getExistingArticleTitles(articleIndex) : [];
-      const skipSourceIds = settings.overwriteSameName ? [] : this.getExistingSourceIds(articleIndex, settings);
+      const existingSourceIds = this.getExistingSourceIds(articleIndex, settings);
+      const skipSourceIds = settings.overwriteSameName && !pendingResume ? [] : existingSourceIds;
+      if (pendingResume) {
+        const savedIds = new Set(existingSourceIds);
+        const remaining = pendingResume.records.filter((record) => !savedIds.has(record.sourceId));
+        resumeAlreadySaved = pendingResume.records.length - remaining.length;
+        pendingResume = { ...pendingResume, records: remaining };
+        this.settings.pendingSourceResume = pendingResume;
+        if (!remaining.length) {
+          if (pendingResume.unresumableCount) {
+            await this.saveSettings();
+            throw new Error(getStrings().sourceResumeUnidentified);
+          }
+          delete this.settings.pendingSourceResume;
+          await this.saveSettings();
+          run.metrics.checked = resumeAlreadySaved;
+          counts.skipped = resumeAlreadySaved;
+          await this.recordSyncReport({ finishedAt: Date.now(), interactive, status: "success",
+            summary: `同步完成：跳过 ${resumeAlreadySaved} 篇，未完成批次已补齐。`, errors: [] });
+          return;
+        }
+        if (resumeAlreadySaved) await this.saveSettings();
+      }
       const card = await this.openOperationCard(run, interactive);
       if (card) {
         const decision = await card.decision;
@@ -2331,14 +3505,18 @@ export default class ImaSpeedSyncPlugin extends Plugin {
         }
       }
       this.assertRunActive(run);
-      const effectiveMaxItems = maxItems ?? (
+      const effectiveMaxItems = pendingResume?.records.length ?? maxItems ?? (
         settings.contentMode === "general" && (settings.syncScopeMode ?? "recent") === "all"
           ? 1000
           : settings.maxItems
       );
-      const rawResult = await this.runPowerShell(effectiveMaxItems, skipTitles, settings, run, skipSourceIds);
+      const rawResult = await this.runPowerShell(effectiveMaxItems, skipTitles, settings, run, skipSourceIds, "sync", pendingResume?.records);
       this.assertRunActive(run, true);
       const result = this.parseExtractionResult(rawResult);
+      if (result.sourceNeedsRebind) {
+        this.sourceNeedsRebind = result.sourceNeedsRebind;
+        result.errors = [...(result.errors ?? []), { title: "", message: getStrings().sourceRebindNeeded }];
+      }
       if (result.busy) {
         await this.recordSyncReport({ finishedAt: Date.now(), interactive, status: "canceled", summary: "未开始：已有其他同步任务运行。", errors: [] }, false);
         if (interactive) this.notifyManual("另一个窗口正在运行 IMA Share Sync。");
@@ -2358,11 +3536,40 @@ export default class ImaSpeedSyncPlugin extends Plugin {
         if (interactive) this.notifyManual("当前 Windows 桌面处于锁定状态，请解锁后重试。");
         return;
       }
+      const nativeProfile = activeProfile(settings);
+      if (settings.contentMode === "general" && nativeProfile?.identityProvider === "desktop-uia") {
+        for (const item of result.items ?? []) {
+          if (!Array.isArray(item.relativeFolderIds) || item.relativeFolderIds.length !== (item.relativeFolder ?? []).length) {
+            throw new Error("文章来源目录 ID 缺失或层级不一致，未保存文件。");
+          }
+          folderDestinationKey(item.relativeFolderIds);
+        }
+        const observations = [...(result.sourceFolderObservations ?? []), ...(result.items ?? []).filter(item => item.sourceId && item.relativeFolderIds).map(item => ({
+          sourceId: item.sourceId!, relativeFolder: item.relativeFolder ?? [], relativeFolderIds: item.relativeFolderIds!,
+        }))];
+        const oldRecords: { id: string; path: string[] }[] = [];
+        const addOldPath = (id: string, filePath: string): void => {
+          const normalized = filePath.replace(/\\/g, "/");
+          if (!normalized.startsWith(destinationPath + "/")) return;
+          oldRecords.push({ id, path: normalized.slice(destinationPath.length + 1).split("/").slice(0, -1) });
+        };
+        for (const record of this.syncedAttachments) if (record.sourceScope === nativeProfile.sourceScope) addOldPath(record.sourceId, record.path);
+        for (const [filePath, metadata] of articleIndex.metadataByPath) if (metadata.sourceScope === nativeProfile.sourceScope && metadata.sourceId) addOldPath(metadata.sourceId, filePath);
+        const mapping = buildFolderDestinations(nativeProfile.folderDestinations, observations.map(item => ({ ...item,
+          relativeFolder: this.resolveItemDestination(destinationPath, item.relativeFolder).slice(destinationPath.length + 1).split("/").filter(Boolean),
+        })), oldRecords);
+        const state = this.settings.sourceIdentity!;
+        const next = { ...this.settings, sourceIdentity: { ...state, profiles: { ...state.profiles,
+          [nativeProfile.knowledgeBaseId]: { ...activeProfile(this.settings)!, folderDestinations: mapping } } } };
+        if (JSON.stringify(mapping) !== JSON.stringify(nativeProfile.folderDestinations)) await this.persistIdentitySettings(next);
+        settings = Object.freeze({ ...settings, sourceIdentity: next.sourceIdentity });
+      }
+      this.capturePendingSourceResume(result, settings, pendingResume);
       this.updateOperationCard(run, "正在保存文章…");
       const extractionCanceled = result.canceled === true;
       if (!extractionCanceled) this.assertRunActive(run);
 
-      counts.skipped = result.skippedTitles?.length ?? 0;
+      counts.skipped = (result.skippedTitles?.length ?? 0) + resumeAlreadySaved;
       run.metrics.checked = (result.items?.length ?? 0) + counts.skipped + (result.errors ?? []).filter(error => error.title.trim()).length;
       issues.push(...(result.errors ?? []));
       const items = [...(result.items ?? [])].sort(
@@ -2381,7 +3588,10 @@ export default class ImaSpeedSyncPlugin extends Plugin {
         this.updateOperationCard(run, `正在保存 (${processedIndex}/${totalItems})：${displayTitle.slice(0, 24)}…`);
         try {
           const itemDestination = settings.contentMode === "general"
-            ? this.resolveItemDestination(destinationPath, item.relativeFolder) : destinationPath;
+            ? activeProfile(settings)?.identityProvider === "desktop-uia"
+              ? this.resolveDestinationPath([destinationPath, ...resolveFolderDestination(activeProfile(settings)!.folderDestinations ?? {}, item.relativeFolderIds!)].join("/"))
+              : this.resolveItemDestination(destinationPath, item.relativeFolder)
+            : destinationPath;
           await this.ensureFolder(itemDestination);
           let itemIndex = articleIndex;
           if (settings.contentMode === "general") {
@@ -2413,7 +3623,25 @@ export default class ImaSpeedSyncPlugin extends Plugin {
         }
       }
 
-      if (!extractionCanceled) {
+      if (this.settings.pendingSourceResume) {
+        try {
+          await this.persistPendingSourceResume();
+          const remaining = this.getPendingSourceResume();
+          if (remaining && !result.errors?.length && !saveErrors.length) {
+            const message = remaining.records.length
+              ? getStrings().sourceResumeDesc(remaining.records.length, remaining.unresumableCount)
+              : getStrings().sourceResumeUnidentified;
+            issues.push({ title: "", message });
+            saveErrors.push({ title: "", message });
+          }
+        }
+        catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          issues.push({ title: "", message });
+          saveErrors.push({ title: "", message });
+          console.error("保存未完成批次失败", error);
+        }
+      } else if (!extractionCanceled) {
         try {
           await this.saveSettings();
         } catch (error) {
@@ -2483,6 +3711,19 @@ export default class ImaSpeedSyncPlugin extends Plugin {
       });
       if (errors.length) console.error("IMA Share Sync 存在文章处理失败", errors);
     } catch (error) {
+      const desktopState = (error as { code?: string })?.code;
+      if (desktopState === "desktop-locked" || desktopState === "desktop-busy") {
+        const locked = desktopState === "desktop-locked";
+        await this.recordSyncReport({ finishedAt: Date.now(), interactive, status: "canceled",
+          summary: locked ? "已推迟：Windows 桌面当前处于锁定状态，等待解锁后同步。" : "未开始：已有其他同步任务运行。", errors: [] }, false);
+        if (locked && !interactive && !this.unloaded && this.settings.autoSync) this.scheduleDeferredSync(false, maxItems);
+        if (interactive) this.notifyManual(locked ? "当前 Windows 桌面处于锁定状态，请解锁后重试。" : "另一个窗口正在运行 IMA Share Sync。");
+        return;
+      }
+      if (this.settings.pendingSourceResume) {
+        try { await this.persistPendingSourceResume(); }
+        catch (pendingError) { console.error("保留未完成批次失败", pendingError); }
+      }
       if (error instanceof SyncCanceledError || run.cancellationRequested || this.unloaded) {
         await this.recordSyncReport({
           finishedAt: Date.now(), interactive, status: issues.length ? "failed" : "canceled",
@@ -2497,6 +3738,7 @@ export default class ImaSpeedSyncPlugin extends Plugin {
       console.error("IMA Share Sync 失败", error);
       await this.recordSyncReport({
         finishedAt: Date.now(), interactive, status: "failed",
+        ...((error as { action?: string })?.action === "source-settings" ? { action: "source-settings" as const } : {}),
         summary: detail.length <= 60 && !/[\r\n]/.test(detail) ? `同步失败：${detail}` : "同步失败，请查看原因。",
         errors: [...issues, { title: "同步任务", message: detail }],
       });
@@ -2535,18 +3777,26 @@ export default class ImaSpeedSyncPlugin extends Plugin {
         this.currentProcess = null;
         this.cancellationRequested = false;
         this.cancellationPath = null;
-        if (!this.unloaded) this.refreshView();
+        if (!this.unloaded) {
+          if (this.sourceNeedsRebind || pendingResume || this.settings.pendingSourceResume) this.settingsTab?.refreshSourceSettings();
+          this.refreshView();
+        }
       }
     }
   }
 
   private validateSettings(settings: Readonly<ImaSpeedSyncSettings>): string {
+    this.resolveDestinationPath(settings.destinationPath);
     if (!settings.knowledgeBaseName.trim()) {
       throw new Error("请先填写完整的 IMA 知识库名称。");
     }
-    if (!settings.folderName.trim()) {
+    if (!["folder", "knowledge-base"].includes(settings.sourceTargetKind ?? "folder")) throw new Error("来源范围无效。");
+    if (settings.sourceTargetKind !== "knowledge-base" && !settings.folderName.trim()) {
       throw new Error("请先填写完整的 IMA 文件夹名称。");
     }
+    if (settings.sourceFolderPath !== undefined && (!Array.isArray(settings.sourceFolderPath) || settings.sourceFolderPath.length > 5 ||
+      settings.sourceFolderPath.some(part => typeof part !== "string" || !part.trim()) ||
+      (settings.sourceTargetKind !== "knowledge-base" && settings.sourceFolderPath.at(-1) !== settings.folderName))) throw new Error("来源目录路径无效。");
     if (!Number.isInteger(settings.maxItems) || settings.maxItems < 1 || settings.maxItems > 1000) {
       throw new Error("检查数量必须在 1–1000 之间。");
     }
@@ -2573,8 +3823,14 @@ export default class ImaSpeedSyncPlugin extends Plugin {
   }
 
   getEffectiveDestinationPath(settings: Readonly<ImaSpeedSyncSettings> = this.settings): string {
+    const binding = this.getSourceBinding(settings);
+    if (binding) return this.resolveDestinationPath(binding.localDestination);
+    return this.getLegacyDestinationPath(settings);
+  }
+
+  private getLegacyDestinationPath(settings: Readonly<ImaSpeedSyncSettings>): string {
     const base = this.resolveDestinationPath(settings.destinationPath);
-    if (settings.includeSourceFolder && settings.folderName.trim()) {
+    if (settings.sourceTargetKind !== "knowledge-base" && settings.includeSourceFolder && settings.folderName.trim()) {
       const safe = this.sanitizeBasename(settings.folderName.trim());
       if (safe) return normalizePath(`${base}/${safe}`);
     }
@@ -2789,6 +4045,8 @@ export default class ImaSpeedSyncPlugin extends Plugin {
   }
 
   private createSourceScope(settings: Readonly<ImaSpeedSyncSettings>): string {
+    const binding = this.getSourceBinding(settings);
+    if (binding) return binding.sourceScope;
     return createHash("sha256").update(settings.knowledgeBaseName.trim(), "utf8").digest("hex");
   }
 
@@ -2797,7 +4055,7 @@ export default class ImaSpeedSyncPlugin extends Plugin {
     // exact content + source location is only a conservative same-content fallback.
     const identity = item.sourceId
       ? [this.createSourceScope(settings), "card", item.sourceId]
-      : [this.createSourceScope(settings), settings.folderName.trim(), ...(item.relativeFolder ?? []), item.sourceTitle, "content", item.body.replace(/\r\n?/g, "\n").trim()];
+      : [this.createSourceScope(settings), ...[...sourcePath(settings), ...(item.relativeFolder ?? [])].filter(Boolean), item.sourceTitle, "content", item.body.replace(/\r\n?/g, "\n").trim()];
     return `general:${createHash("sha256").update(JSON.stringify(identity), "utf8").digest("hex")}`;
   }
 
@@ -3011,6 +4269,8 @@ export default class ImaSpeedSyncPlugin extends Plugin {
     }
     if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
       const obj = parsed as Record<string, unknown>;
+      // PowerShell serializes its unset optional rebind state as JSON null.
+      if (obj.sourceNeedsRebind === null) delete obj.sourceNeedsRebind;
       if (Array.isArray(obj.items)) {
         for (const item of obj.items) {
           if (item && typeof item === "object") {
@@ -3032,9 +4292,15 @@ export default class ImaSpeedSyncPlugin extends Plugin {
   private isExtractionResult(value: unknown): value is ExtractionResult {
     if (!value || typeof value !== "object" || Array.isArray(value)) return false;
     const result = value as Record<string, unknown>;
-    const hasKnownField = ["busy", "canceled", "locked", "items", "errors", "skippedTitles"]
+    const hasKnownField = ["busy", "canceled", "locked", "items", "errors", "skippedTitles", "sourceInspection", "sourceNeedsRebind", "identityResult"]
       .some((key) => Object.prototype.hasOwnProperty.call(result, key));
     if (!hasKnownField) return false;
+    if (result.sourceCatalog !== undefined && !isSourceCatalog(result.sourceCatalog)) return false;
+    if (result.sourceInspection !== undefined && !isSourceInspection(result.sourceInspection)) return false;
+    if (result.sourceNeedsRebind !== undefined && !isSourceNeedsRebind(result.sourceNeedsRebind)) return false;
+    if (result.sourcePendingRecords !== undefined && !isSourcePendingRecords(result.sourcePendingRecords)) return false;
+    if (result.sourcePendingUnresumableCount !== undefined &&
+      (typeof result.sourcePendingUnresumableCount !== "number" || !Number.isInteger(result.sourcePendingUnresumableCount) || result.sourcePendingUnresumableCount < 0)) return false;
     if (result.busy !== undefined && typeof result.busy !== "boolean") return false;
     if (result.canceled !== undefined && typeof result.canceled !== "boolean") return false;
     if (result.locked !== undefined && typeof result.locked !== "boolean") return false;
@@ -3087,6 +4353,9 @@ export default class ImaSpeedSyncPlugin extends Plugin {
     settings: Readonly<ImaSpeedSyncSettings>,
     run: SyncRun,
     skipSourceIds: string[] = [],
+    operation: "sync" | "inspect-source" | "list-knowledge-bases" | "list-source-folders" | "native-identity" = "sync",
+    resumeRecords?: SourcePendingRecord[],
+    nativeIdentity?: NativeIdentityRequest,
   ): Promise<string> {
     if (!Platform.isWin) throw new Error("此功能需要 Windows。");
     if (!(this.app.vault.adapter instanceof FileSystemAdapter)) {
@@ -3109,6 +4378,13 @@ export default class ImaSpeedSyncPlugin extends Plugin {
       if (this.activeRun === run) this.cancellationPath = cancellationPath;
 
       await writeFile(inputPath, JSON.stringify({
+        operation,
+        ...(nativeIdentity ? { nativeIdentity } : {}),
+        ...(operation === "sync" && activeProfile(settings)?.identityProvider === "desktop-uia" ? { nativeSource: desktopSource(activeProfile(settings)!) } : {}),
+        sourceTargetKind: settings.sourceTargetKind ?? "folder",
+        ...(settings.sourceFolderPath ? { sourceFolderPath: settings.sourceFolderPath } : {}),
+        ...(settings.sourceCatalogPath ? { sourceCatalogPath: settings.sourceCatalogPath } : {}),
+        ...(resumeRecords ? { resumeRecords } : {}),
         skipTitles, skipSourceIds,
         syncScopeMode: settings.syncScopeMode ?? "recent",
         generalSelectionMode: settings.generalSelectionMode,
@@ -3116,7 +4392,7 @@ export default class ImaSpeedSyncPlugin extends Plugin {
         maxFolders: settings.maxFolders,
         maxFolderDepth: settings.includeSubfolders ? settings.maxFolderDepth : 0,
         downloadDirectory,
-        existingFiles: settings.overwriteSameName ? [] : (() => {
+        existingFiles: operation !== "sync" || settings.overwriteSameName ? [] : (() => {
           const destination = this.getEffectiveDestinationPath(settings);
           const folder = this.app.vault.getAbstractFileByPath(destination);
           return folder instanceof TFolder ? this.getDescendants(folder)
@@ -3139,10 +4415,8 @@ export default class ImaSpeedSyncPlugin extends Plugin {
         scriptPath,
         "-MaxItems",
         String(maxItems),
-        "-KnowledgeBaseName",
-        settings.knowledgeBaseName,
-        "-FolderName",
-        settings.folderName,
+        ...(settings.knowledgeBaseName ? ["-KnowledgeBaseName", settings.knowledgeBaseName] : []),
+        ...(settings.sourceTargetKind !== "knowledge-base" && settings.folderName ? ["-FolderName", settings.folderName] : []),
         "-InputPath",
         inputPath,
         "-OutputPath",
@@ -3191,7 +4465,7 @@ export default class ImaSpeedSyncPlugin extends Plugin {
 
         let child: ChildProcess;
         try {
-          child = spawn("powershell.exe", args, {
+          child = spawn(windowsPowerShellPath(), args, {
             windowsHide: true,
             stdio: ["ignore", "pipe", "pipe"],
           });

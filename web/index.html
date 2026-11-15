@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>IMA Share Sync · Web</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/web/host.css">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body class="theme-light">
+  <header class="web-toolbar">
+    <a class="web-brand" href="/">IMA Share Sync <span>Web</span></a>
+    <div class="web-tools">
+      <a href="/web/flow-options.html#d">交互与配色稿</a>
+      <label><span class="sr-only">验收场景</span><select id="scenario" aria-label="验收场景"></select></label>
+      <button id="surface" type="button">同步面板</button>
+      <button id="theme" type="button" aria-label="切换深色外观">深色</button>
+      <details class="web-more"><summary>开发</summary><div>
+        <p id="build-label">正在加载…</p>
+        <button id="reset" type="button">重置场景</button>
+        <button id="inspect" type="button">查看测试状态</button>
+        <a href="/web/README.md" target="_blank">开发说明</a>
+      </div></details>
+    </div>
+  </header>
+  <div class="web-context">ID 方案交互预览 · 示例数据 · 设置仅保存在此浏览器</div>
+  <div id="reload-banner" class="web-banner" hidden role="status"><span></span><button id="reload" type="button">刷新页面</button></div>
+  <main class="web-shell">
+    <p id="fixture-error" role="alert" hidden></p>
+    <form id="settings" aria-label="IMA Share Sync 插件设置"></form>
+    <section id="home" hidden aria-label="同步面板"><aside id="panel"></aside><article id="note" tabindex="-1"><h2>选择一篇文章</h2><p>这里展示测试资料。</p></article></section>
+  </main>
+  <div id="fixture-notices" aria-live="polite"></div>
+  <script type="module" src="/web/app.mjs"></script>
+</body>
+</html>

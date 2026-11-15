@@ -726,9 +726,9 @@ finally {
 Assert-Equal "True" ([string]($scriptSource -match 'attempt -lt 90')) "IMA cold start waits for main window"
 $openSpeedFolderSource = [regex]::Match(
     $scriptSource,
-    'function Open-ImaSpeedFolder \{(?s:.*?)\r?\n\}'
+    'function Open-ImaKnowledgeBaseRoot \{(?s:.*?)\r?\n\}'
 ).Value
-Assert-Equal "True" ([string]($openSpeedFolderSource -match 'Wait-ImaText\s+"')) "startup waits for knowledge-base navigation"
+Assert-Equal "True" ([string]($openSpeedFolderSource -match 'Wait-ImaText\s+')) "startup waits for knowledge-base navigation"
 Assert-Equal "True" ([string]($scriptSource.Contains('Wait-ImaText $script:KnowledgeBaseName'))) "startup waits for configured knowledge base"
 Assert-Equal "True" ([string]($scriptSource.Contains('function Close-ImaApplication'))) "application close function exists"
 Assert-Equal "True" ([string]($scriptSource.Contains('[Windows.Automation.AutomationElement]::AutomationIdProperty'))) "application close uses automation id"

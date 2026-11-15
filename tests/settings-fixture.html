@@ -273,7 +273,8 @@
         this.manifest = { id: 'ima-speed-sync', version: '__PLUGIN_VERSION__' };
         this.app = {
           // A throwing proxy makes accidental vault access visible instead of silently succeeding.
-          vault: new Proxy({}, { get: (_target, name) => blocked(`vault.${String(name)}`) }),
+          vault: new Proxy({ configDir: '.obsidian', getFiles: () => [], getAbstractFileByPath: () => null, getAllLoadedFiles: () => ['IMA Share Sync', '阅读/待读', '03投资/机构研报'].map(path => Object.assign(new obsidian.TFolder(), {path})) },
+            { get: (target, name) => name in target ? target[name] : blocked(`vault.${String(name)}`) }),
           workspace: { getLeavesOfType: () => [], onLayoutReady() {} },
         };
       }
@@ -292,15 +293,27 @@
       normalizePath: (value) => value.replaceAll('\\', '/'),
       addIcon() {},
       setIcon(element, name) {
-        if (name !== 'star') return;
+        const paths = {
+          star:'m12 3 2.8 5.7 6.3.9-4.6 4.5 1.1 6.3L12 17.4l-5.6 3 1.1-6.3L3 9.6l6.2-.9Z',
+          'chevron-down':'m6 9 6 6 6-6','chevron-right':'m9 6 6 6-6 6',check:'m5 12 4 4L19 6',
+          folder:'M3 7V5h6l2 2h10v13H3Z',layers:'m12 3 10 5-10 5L2 8Zm-10 9 10 5 10-5M2 17l10 5 10-5',
+          clock:'M12 3a9 9 0 1 0 0 18 9 9 0 1 0 0-18m0 3v6h5',
+          'book-open':'M12 5Q6 2 2 5v16q5-3 10 0 5-3 10 0V5q-5-3-10 0v16',
+          'bar-chart-2':'M5 21V11m7 10V3m7 18V7', 'file-text':'M14 2H5v20h14V7ZM14 2v6h5M8 13h8m-8 4h8',
+          bell:'M18 8a6 6 0 0 0-12 0v8l-2 2h16l-2-2ZM10 21h4',
+          settings:'M12 2v4m0 12v4M2 12h4m12 0h4M5 5l3 3m8 8 3 3M5 19l3-3m8-8 3-3M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8',
+          x:'m6 6 12 12M6 18 18 6',info:'M12 3a9 9 0 1 0 0 18 9 9 0 1 0 0-18m0 7v6m0-9v1'
+        };
+        if (!paths[name]) return;
         const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
         svg.setAttribute('viewBox', '0 0 24 24');
+        svg.setAttribute('width', '24'); svg.setAttribute('height', '24'); svg.classList.add('svg-icon');
         svg.setAttribute('fill', 'none');
         svg.setAttribute('stroke', 'currentColor');
         svg.setAttribute('stroke-width', '2');
         svg.setAttribute('aria-hidden', 'true');
         const star = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-        star.setAttribute('d', 'm12 3 2.8 5.7 6.3.9-4.6 4.5 1.1 6.3L12 17.4l-5.6 3 1.1-6.3L3 9.6l6.2-.9Z');
+        star.setAttribute('d', paths[name]);
         svg.append(star); element.append(svg);
       },
     };
@@ -308,8 +321,18 @@
     window.require = (name) => {
       if (name === 'worker_threads') return { Worker: class { constructor() { throw new Error('PDF workers are disabled in this settings-only fixture.'); } } };
       if (name === 'obsidian') return obsidian;
-      if (name === 'crypto') return { randomUUID: () => crypto.randomUUID(), createHash: blocked('crypto.createHash') };
+      if (name === 'crypto') return { randomUUID: () => crypto.randomUUID(), createHash: () => ({
+        update(value) { this.value = value; return this; },
+        digest() { const hashes = __FIXTURE_SOURCE_HASHES__; if (!(this.value in hashes)) throw new Error('Only fixture source names are supported'); return hashes[this.value]; },
+      }) };
       if (name === 'child_process') return { spawn: blocked('child_process.spawn') };
+      if (name === 'buffer') return { Buffer: { from(value, encoding) {
+        return encoding === 'base64' ? Uint8Array.from(atob(value), c => c.charCodeAt(0)) :
+          typeof value === 'string' ? new TextEncoder().encode(value) : Uint8Array.from(value);
+      } } };
+      // PDF workers remain blocked; this settings-only host does not load WASM.
+      if (name === 'zlib') return { gunzipSync: () => new Uint8Array(0) };
+      if (name === 'fs' || name === 'electron') return new Proxy({}, { get: (_target, key) => blocked(`${name}.${String(key)}`) });
       if (name === 'fs/promises') return Object.fromEntries(['lstat', 'mkdir', 'mkdtemp', 'readFile', 'realpath', 'rm', 'writeFile', 'rename'].map((key) => [key, blocked(`fs.${key}`)]));
       if (name === 'os') return { tmpdir: blocked('os.tmpdir') };
       if (name === 'path') return { join: blocked('path.join'), resolve: blocked('path.resolve') };
@@ -323,9 +346,26 @@
       const plugin = new PluginExport();
       await plugin.onload();
       if (!settingsTab) throw new Error('The real plugin did not register a settings tab.');
+      const selectionCalls = [];
+      plugin.ensureConsent = async () => true;
+      plugin.runPowerShell = async (_count, _skip, settings, _run, _ids, operation) => {
+        selectionCalls.push({operation, kb:settings.knowledgeBaseName, path:settings.sourceCatalogPath ?? settings.sourceFolderPath ?? []});
+        if (operation === 'list-knowledge-bases') return JSON.stringify({items:[],errors:[],sourceCatalog:{kind:'knowledge-bases',knowledgeBaseName:'',names:['示例知识库','我的学习资料','行业观察'],ambiguousNames:[],complete:false}});
+        if (operation === 'list-source-folders') {
+          const parent = settings.sourceCatalogPath ?? [];
+          const names = parent.length === 0 ? ['示例分享文件夹','2026年10月','2026年09月'] : parent.length === 1 ? ['261031','261030'] : parent.length === 2 ? ['图表'] : [];
+          return JSON.stringify({items:[],errors:[],sourceCatalog:{kind:'folders',knowledgeBaseName:settings.knowledgeBaseName,parentPath:parent,names,ambiguousNames:[],complete:true}});
+        }
+        if (operation === 'inspect-source') {
+          const parts = settings.sourceTargetKind === 'knowledge-base' ? [] : settings.sourceFolderPath ?? [settings.folderName];
+          return JSON.stringify({items:[],errors:[],sourceInspection:{knowledgeBaseName:settings.knowledgeBaseName,folderName:settings.folderName,targetKind:settings.sourceTargetKind,folderPath:parts,breadcrumb:['内容(100)',...parts],stableFolderId:null,identityMode:'explicit-confirmation'}});
+        }
+        throw new Error('Isolated fixture blocks sync/download');
+      };
       settingsTab.display();
       window.fixture = Object.freeze({
         plugin,
+        selectionCalls,
         tab: settingsTab,
         get savedData() { return clone(savedData); },
         get saveCount() { return saveCount; },

@@ -1,6 +1,6 @@
 {
   "name": "ima-share-sync",
-  "version": "0.3.6",
+  "version": "0.3.18",
   "description": "Windows Obsidian plugin for syncing IMA articles and permitted original files, with local PDF-to-Markdown conversion.",
   "private": true,
   "license": "MIT",
@@ -9,14 +9,18 @@
     "dev": "node esbuild.config.mjs watch",
     "lint": "eslint src/**/*.ts",
     "typecheck": "tsc --noEmit",
-    "test:js": "node tests/test-main.cjs && node tests/test-dashboard-stats.cjs",
+    "test:js": "node tests/test-main.cjs && node tests/test-dashboard-stats.cjs && node tests/test-source-binding.cjs && node tests/test-native-integration.cjs",
     "test:pdf": "node tests/test-pdf-validation.mjs",
-    "test:ps": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/test-sync.ps1 && powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/test-general.ps1 && powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/test-general-folders.ps1 && powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/test-list-readiness.ps1 && powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/test-original-file-safety.ps1 && powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/test-file-title-paths.ps1",
+    "test:ps": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/test-sync.ps1 && powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/test-general.ps1 && powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/test-general-folders.ps1 && powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/test-list-readiness.ps1 && powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/test-original-file-safety.ps1 && powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/test-file-title-paths.ps1 && powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/test-source-binding.ps1 && powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/test-source-selection.ps1 && powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/test-desktop-readiness.ps1 && powershell.exe -NoProfile -ExecutionPolicy Bypass -File tests/test-native-identity.ps1",
     "test:card": "node tests/test-operation-card.cjs",
-    "test": "npm run build && npm run test:js && npm run test:pdf && npm run test:markdown && npm run test:ps && npm run test:card",
+    "test": "npm run build && npm run test:js && npm run test:pdf && npm run test:markdown && npm run test:ps && npm run test:card && npm run test:identity",
     "verify:release": "node scripts/verify-release.mjs",
     "check": "npm run verify:release && npm run lint && npm run typecheck && npm test",
-    "test:markdown": "node tests/test-markdown-conversion.mjs"
+    "test:markdown": "node tests/test-markdown-conversion.mjs",
+    "dev:web": "node web/server.mjs",
+    "test:web": "node --test web/test-contracts.mjs web/test-native-host.mjs web/test-native-runner.cjs",
+    "package:plugin": "node web/package.mjs",
+    "test:identity": "node --test tests/test-ima-identity.mjs tests/test-desktop-identity.mjs tests/test-folder-destinations.mjs tests/test-silent-directory.mjs tests/test-identity-picker.mjs"
   },
   "engines": {
     "node": ">=20"

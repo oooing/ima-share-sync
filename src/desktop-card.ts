@@ -3,6 +3,7 @@ import { mkdtemp, writeFile, rename, rm } from "fs/promises";
 import * as os from "os";
 import * as path from "path";
 import cardScript from "./operation-card.ps1";
+import { windowsPowerShellPath } from "./windows-runtime";
 
 export type CardDecision = "start" | "later" | "cancel";
 export interface CardState {
@@ -36,7 +37,7 @@ export class DesktopOperationCard {
         let ready = false;
         let buffer = "";
         const timeout = window.setTimeout(() => reject(new Error("桌面操作提示未能启动，已阻止自动操作。")), 20000);
-        const child = spawn("powershell.exe", ["-NoLogo", "-NoProfile", "-NonInteractive", "-STA", "-ExecutionPolicy", "Bypass",
+        const child = spawn(windowsPowerShellPath(), ["-NoLogo", "-NoProfile", "-NonInteractive", "-STA", "-ExecutionPolicy", "Bypass",
           "-File", scriptPath, "-StatePath", path.join(this.directory, "state.json"), "-OwnerProcessId", String(process.pid)],
         { windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
         this.child = child;

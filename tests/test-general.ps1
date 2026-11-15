@@ -26,6 +26,12 @@ Check $false (Test-ImaGeneralTitle ' ') 'empty card title'
 $script:TitleFilterMode = 'contains'; $script:TitleFilter = 'meeting'
 Check $true (Test-ImaGeneralTitle 'Weekly MEETING notes') 'literal case-insensitive keyword'
 Check $false (Test-ImaGeneralTitle 'ordinary notes') 'nonmatching keyword'
+$script:TitleFilter = 'Aluminum Corporation'
+Check $true (Test-ImaGeneralTitle ("Aluminum" + [char]0xA0 + "Corporation report")) 'literal keyword matches Chromium NBSP'
+Check $true (Test-ImaGeneralTitle ("Aluminum" + [char]0x202F + "Corporation report")) 'literal keyword matches narrow NBSP'
+$script:TitleFilterMode = 'prefix'; $script:TitleFilter = 'Aluminum Corporation'
+Check $true (Test-ImaGeneralTitle ("Aluminum" + [char]0xA0 + "Corporation of China")) 'literal prefix matches Chromium NBSP'
+Check $false (Test-ImaGeneralTitle 'Other Aluminum Corporation') 'normalized prefix still requires start'
 $script:TitleFilterMode = 'prefix'; $script:TitleFilter = '[Notes]'
 Check $true (Test-ImaGeneralTitle '[Notes] literal brackets') 'prefix is not regex'
 Check $false (Test-ImaGeneralTitle 'N literal brackets') 'prefix does not interpret character classes'
@@ -43,6 +49,78 @@ Check 0 (Get-ImaCardTitleIndex @('普通标题', '笔记', '06:58更新') 'note'
 Check 1 (Get-ImaCardTitleIndex @('很长的缩略图摘要', '真正的标题', '笔记', '9/7更新') 'note') 'preview is not the title'
 Check 1 (Get-ImaCardTitleIndex @('关键词出现在摘要', '不匹配的标题', '笔记', '昨天更新') 'note') 'filter does not promote a matching preview'
 Check-Throws { Get-ImaCardTitleIndex @('不明结构', '笔记') 'note' } 'unknown card shape is not guessed'
+
+& {
+    # Exercise the production snapshot body with an in-memory UIA-shaped list.
+    # Only its boundary parameter type changes; its record construction, sort,
+    # array cardinality and readiness logic remain exactly the source under test.
+    $snapshotTokens = $null; $snapshotParseErrors = $null
+    $snapshotAst = [Management.Automation.Language.Parser]::ParseInput($source, [ref]$snapshotTokens, [ref]$snapshotParseErrors)
+    $snapshotDefinition = $snapshotAst.Find({
+        param($node)
+        $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Get-ImaGeneralTitleSnapshot'
+    }, $true)
+    if (-not $snapshotDefinition) { throw 'OFFLINE TEST: production title snapshot function was not found' }
+    $snapshotAdapter = $snapshotDefinition.Extent.Text.Replace(
+        '[Windows.Automation.AutomationElement]$ListElement', '[object]$ListElement')
+    . ([scriptblock]::Create($snapshotAdapter))
+    function Test-ImaCancellation {}
+    $snapshotFooter = $false
+    function Test-ImaNamedElement { param($Element, $Name) return $snapshotFooter }
+
+    function New-SnapshotTestCard([int]$Index) {
+        $cardY = 100 + 80 * $Index
+        $titleBounds = [pscustomobject]@{X=10;Y=($cardY+8);Width=300;Height=40;Bottom=($cardY+48)}
+        $titleText = [pscustomobject]@{Current=[pscustomobject]@{
+            Name="Card-$Index.pdf"; IsOffscreen=$false; BoundingRectangle=$titleBounds
+        }}
+        $testCard = [pscustomobject]@{
+            Current=[pscustomobject]@{
+                AutomationId="knowledge-pdf_test-source-0000000000-$Index"
+                BoundingRectangle=[pscustomobject]@{X=0;Y=$cardY;Width=400;Height=71;Bottom=($cardY+71)}
+            }
+            Texts=@($titleText, [pscustomobject]@{Current=[pscustomobject]@{Name='PDF'}}, [pscustomobject]@{Current=[pscustomobject]@{Name='今天更新'}})
+            TestRuntimeId=$Index
+        }
+        $testCard | Add-Member ScriptMethod FindAll { param($Scope, $Condition) return $this.Texts }
+        $testCard | Add-Member ScriptMethod GetRuntimeId { return @(42, 1234, $this.TestRuntimeId) }
+        return $testCard
+    }
+
+    $snapshotFailures = New-Object Collections.Generic.List[string]
+    foreach ($includeOffscreen in @($false, $true)) {
+        foreach ($cardCount in @(0, 1, 2)) {
+            $testCards = @(for ($cardIndex=0; $cardIndex -lt $cardCount; $cardIndex++) { New-SnapshotTestCard $cardIndex })
+            $snapshotList = [pscustomobject]@{
+                Current=[pscustomobject]@{BoundingRectangle=[pscustomobject]@{X=0;Y=0;Width=400;Height=800;Bottom=800}}
+                Cards=$testCards
+            }
+            $snapshotList | Add-Member ScriptMethod FindAll { param($Scope, $Condition) return $this.Cards }
+            try {
+                $cardSnapshot = Get-ImaGeneralTitleSnapshot $snapshotList -IncludeOffscreen:$includeOffscreen
+                Check $true ($cardSnapshot.AllRecords -is [array]) "snapshot $cardCount loaded cards keeps AllRecords as an array"
+                Check $cardCount $cardSnapshot.AllRecords.Count "snapshot $cardCount loaded cards preserves AllRecords count"
+                Check $cardCount $cardSnapshot.Records.Count "snapshot $cardCount loaded cards preserves selected records"
+                Check $cardCount $cardSnapshot.Elements.Count "snapshot $cardCount loaded cards preserves title elements"
+                if ($cardCount -eq 0) {
+                    Check '' $cardSnapshot.ReadinessSignature 'zero loaded cards without footer are not mistaken for a ready folder'
+                } else {
+                    Check "knowledge-pdf_test-source-0000000000-$($cardCount - 1)" $cardSnapshot.AllRecords[-1].SourceId 'snapshot preserves the last loaded source identity'
+                    Check $true (-not [string]::IsNullOrWhiteSpace($cardSnapshot.ReadinessSignature)) 'one or more loaded cards have a readiness signature'
+                }
+            } catch {
+                $snapshotFailures.Add("count=$cardCount includeOffscreen=$includeOffscreen : $($_.Exception.Message)")
+            }
+        }
+    }
+    if ($snapshotFailures.Count) { Write-Output ($snapshotFailures -join "`n") }
+    Check 0 $snapshotFailures.Count 'real title snapshot handles 0, 1 and multiple loaded cards in both modes'
+    $snapshotFooter = $true
+    $snapshotList.Cards = @()
+    $emptyFolderSnapshot = Get-ImaGeneralTitleSnapshot $snapshotList -IncludeOffscreen
+    Check 'empty-folder' $emptyFolderSnapshot.ReadinessSignature 'zero cards with the explicit end marker retain empty-folder readiness'
+    Check 0 $emptyFolderSnapshot.AllRecords.Count 'a ready empty folder still returns an empty array'
+}
 
 Check "前文`n`n---`n`n后文" (Convert-ImaGeneralDecorations '前文后文' @([pscustomobject]@{Start=2;Length=0;Markdown="`n`n---`n`n"})) 'structural separator is restored'
 Check '[链接](<https://example.test/?x=1&y=2>) text' (Convert-ImaGeneralDecorations '链接 text' @([pscustomobject]@{Start=0;Length=2;Markdown='[链接](<https://example.test/?x=1&y=2>)'})) 'named hyperlink replacement preserves query'
@@ -209,6 +287,45 @@ Check $true (Test-ImaGeneralBottom ([pscustomobject]@{Scrollable=$true;ScrollPer
     Check 1 $result.skippedTitles.Count 'source ID skip is counted'
     Check 1 $result.errors.Count 'unsupported content is explicitly reported'
     Check 2 $script:closedRecords 'each newly opened article is closed once'
+}
+
+& {
+    # Protect the observed 67 saved / 33 missing split at the real sync loop,
+    # with only the external file download replaced by a counting stub.
+    $script:CompletedItems = New-Object Collections.Generic.List[object]
+    $script:CompletedErrors = New-Object Collections.Generic.List[object]
+    $script:CompletedSkippedTitles = New-Object Collections.Generic.List[string]
+    $script:SkipSourceIds = @{}; $script:ExistingFiles = @{}
+    $script:GeneralFolderPath = @(); $script:downloadedSourceIds = @()
+    $hundredCandidates = @(
+        foreach ($index in 1..100) {
+            $sourceId = 'source-' + $index.ToString('000')
+            if ($index -le 67) { $script:SkipSourceIds[$sourceId] = $true }
+            [pscustomobject]@{Name="document-$index.pdf"; Kind='pdf'; SourceId=$sourceId; RelativeFolder=@()}
+        }
+    )
+    function Get-ImaGeneralCandidates { return $hundredCandidates }
+    function Save-ImaOriginalFile {
+        param($Record)
+        if ($script:SkipSourceIds.ContainsKey($Record.SourceId)) { throw 'OFFLINE TEST: attempted to re-download a saved source' }
+        $script:downloadedSourceIds += $Record.SourceId
+        return ('downloads/' + $Record.Name)
+    }
+    function Write-ImaProgress {}
+    function Open-ImaGeneralPath { throw 'OFFLINE TEST: unexpected directory navigation' }
+    $firstHundred = Invoke-ImaGeneralSync $null
+    Check 67 $firstHundred.skippedTitles.Count 'the 67 recognized sources skip before any download'
+    Check 33 $firstHundred.items.Count 'only the 33 missing sources enter the download result'
+    Check 0 $firstHundred.errors.Count 'the 67/33 sync split has no stub download errors'
+    Check 33 $script:downloadedSourceIds.Count 'there is exactly one download call per missing source'
+    Check 33 @($script:downloadedSourceIds | Select-Object -Unique).Count 'the missing sources are not downloaded twice in one run'
+    foreach ($item in $firstHundred.items) { $script:SkipSourceIds[$item.sourceId] = $true }
+    $script:CompletedItems.Clear(); $script:CompletedErrors.Clear(); $script:CompletedSkippedTitles.Clear()
+    $script:downloadedSourceIds = @()
+    $secondHundred = Invoke-ImaGeneralSync $null
+    Check 100 $secondHundred.skippedTitles.Count 'a repeat run skips all 100 source identities'
+    Check 0 $secondHundred.items.Count 'a repeat run emits no newly downloaded items'
+    Check 0 $script:downloadedSourceIds.Count 'a repeat run calls no external download'
 }
 
 & {
@@ -530,6 +647,170 @@ Check $true (Test-ImaGeneralBottom ([pscustomobject]@{Scrollable=$true;ScrollPer
     function Get-ImaTitleListScroller { param($Root) return $mockScroller }
     function Set-ImaTitleListScrollPercent { param($Target, $Percent) $script:lastSetScroll = $Percent }
     function Get-ImaGeneralTitleSnapshot { param($List, [switch]$IncludeOffscreen) return [pscustomobject]@{ AllRecords=@() } }
+
+    # A re-opened long list may require additional user-equivalent scrolls to
+    # load its tail. Re-reading snapshots alone never advances this fixture.
+    & {
+        $savedFolderName = $script:FolderName
+        $script:FolderName = 'Research'
+        $lazyCard = Make-MockArticleElement 'key-lazy-tail' 'same lazy title' 501
+        $lazyDecoy = Make-MockArticleElement 'key-lazy-decoy' 'same lazy title' 502
+        $lazyDuplicate = Make-MockArticleElement 'key-lazy-tail' 'same lazy title' 503
+        $lazyRequest = [pscustomobject]@{
+            Name='same lazy title'; Key='key-lazy-tail'; Kind='note';
+            ScrollPercent=100; ScrollStep=8; RelativeFolder=@('daily')
+        }
+
+        function Reset-LazyArticleFixture([int]$RequiredScrolls, [bool]$ConstantPercent = $false) {
+            $script:invokedKeys = @(); $script:invokedRuntimeIds = @()
+            $script:lazyScrolls = @(); $script:lazyGeneration = 0
+            $script:lazyCurrent = 10.0; $script:lazyView = 27.1
+            $script:lazyRequiredScrolls = $RequiredScrolls
+            $script:lazyConstantPercent = $ConstantPercent
+            $script:lazyStalled = $false; $script:lazyAmbiguous = $false
+            $script:lazyMiddleOnly = $false; $script:lazySawZero = $false
+            $script:lazyNeedsJiggle = $false; $script:lazySawRetreat = $false; $script:lazyReturnedAfterRetreat = $false
+            $script:lazyWrongFolder = $false; $script:lazyCancel = $false
+            $script:lazyPathChecks = 0; $script:lazyCheckedPaths = @()
+            $script:lazyCancelObserved = $false
+        }
+        function Test-ImaFolderSelected {
+            param([string]$FolderName, [string[]]$ExpectedPath)
+            $script:lazyPathChecks++
+            $script:lazyCheckedPaths += ($ExpectedPath -join '/')
+            if ($FolderName -cne 'daily' -or ($ExpectedPath -join '/') -cne 'Research/daily') {
+                throw 'OFFLINE TEST: locator supplied an incorrect expected folder'
+            }
+            return -not ($script:lazyWrongFolder -and $script:lazyScrolls.Count -ge 1)
+        }
+        function Test-ImaCancellation {
+            if ($script:lazyCancel -and $script:lazyScrolls.Count -ge 2) {
+                $script:lazyCancelObserved = $true
+                throw [OperationCanceledException]::new('cancel lazy loading')
+            }
+        }
+        function Get-ImaTitleListScroller {
+            param($Root)
+            return [pscustomobject]@{
+                Pattern=[pscustomobject]@{Current=[pscustomobject]@{
+                    VerticalScrollPercent=$script:lazyCurrent; VerticalViewSize=$script:lazyView
+                }}
+                RangePattern=$null
+            }
+        }
+        function Set-ImaTitleListScrollPercent {
+            param($Target, $Percent)
+            $script:lazyScrolls += [double]$Percent
+            if ($script:lazyMiddleOnly) { $script:lazyCurrent = [double]$Percent; $script:lazyView = 20.0; if ($Percent -eq 0) { $script:lazySawZero = $true }; return }
+            if ($script:lazyScrolls.Count -gt 1 -and $script:lazyStalled) { return }
+            if ($script:lazyNeedsJiggle -and $script:lazyScrolls.Count -gt 1) {
+                if ($Percent -lt 99.9) { $script:lazySawRetreat = $true }
+                elseif ($script:lazySawRetreat) { $script:lazyReturnedAfterRetreat = $true }
+            }
+            $script:lazyGeneration++
+            $script:lazyView = [Math]::Max(5.0, 15.2 - 2.0 * ($script:lazyGeneration - 1))
+            $script:lazyCurrent = if ($script:lazyNeedsJiggle) { [double]$Percent } elseif ($script:lazyConstantPercent) { 98.0 } else { [Math]::Min(95.0, 47.2 + 8.0 * ($script:lazyGeneration - 1)) }
+        }
+        function Get-ImaGeneralTitleSnapshot {
+            param($List, [switch]$IncludeOffscreen)
+            $records = @($lazyDecoy)
+            for ($part = 0; $part -le $script:lazyGeneration; $part++) {
+                $records += [pscustomobject]@{Key="loaded-prefix-$part"; Name="prefix $part"; Y=[double](100 + $part * 70); Kind='note'}
+            }
+            if (($script:lazyMiddleOnly -and $script:lazySawZero -and $script:lazyCurrent -ge 20 -and $script:lazyCurrent -le 40) -or ($script:lazyScrolls.Count -ge $script:lazyRequiredScrolls -and (-not $script:lazyNeedsJiggle -or $script:lazyReturnedAfterRetreat))) {
+                $records += $lazyCard
+                if ($script:lazyAmbiguous) { $records += $lazyDuplicate }
+            }
+            return [pscustomobject]@{AllRecords=$records; Records=$records; Signature=(($records | ForEach-Object {$_.Key}) -join '|')}
+        }
+        function Get-ImaVisibleTitleSnapshot {
+            param($Root)
+            $records = @($lazyDecoy)
+            if (($script:lazyMiddleOnly -and $script:lazySawZero -and $script:lazyCurrent -ge 20 -and $script:lazyCurrent -le 40) -or ($script:lazyScrolls.Count -ge $script:lazyRequiredScrolls -and (-not $script:lazyNeedsJiggle -or $script:lazyReturnedAfterRetreat))) {
+                $records += $lazyCard
+                if ($script:lazyAmbiguous) { $records += $lazyDuplicate }
+            }
+            return [pscustomobject]@{Records=$records; AllRecords=$records; Signature=(($records | ForEach-Object {$_.Key}) -join '|')}
+        }
+
+        foreach ($requiredScrolls in @(2, 4)) {
+            Reset-LazyArticleFixture $requiredScrolls
+            Invoke-ImaArticleRecord $lazyRequest
+            Check 1 $script:invokedKeys.Count "lazy tail needing $($requiredScrolls - 1) additional scrolls invokes exactly once"
+            Check 'key-lazy-tail' $script:invokedKeys[0] 'lazy-load recovery preserves the requested source key'
+            Check 501 $script:invokedRuntimeIds[0] 'lazy-load recovery never invokes the same-title physical decoy'
+            Check $true ($script:lazyScrolls.Count -ge $requiredScrolls) 'target only becomes available after real scroll progress'
+            Check $true ($script:lazyScrolls.Count -le 14) 'successful lazy-load recovery has bounded scroll input'
+            Check $true ($script:lazyPathChecks -ge 2) 'progressive loading checks the target folder before loading and invoking'
+            Check 1 @($script:lazyCheckedPaths | Select-Object -Unique).Count 'every path check uses the exact expected directory'
+        }
+
+        # The percent can remain 98 while the loaded extent and key set grow.
+        # Equal percentages are not sufficient evidence that the tail was read.
+        Reset-LazyArticleFixture 3 $true
+        $lazyRequest.ScrollPercent = 98
+        Invoke-ImaArticleRecord $lazyRequest
+        Check 1 $script:invokedKeys.Count 'same percent with expanding loaded content still reaches the target'
+        Check 501 $script:invokedRuntimeIds[0] 'same-percent recovery invokes the correct physical card'
+        Check $true ($script:lazyGeneration -ge 3) 'same-percent recovery observes new loaded content rather than stopping early'
+        Check 98 $script:lazyCurrent 'fixture keeps actual percent equal to the saved hint'
+        $lazyRequest.ScrollPercent = 100
+
+        Reset-LazyArticleFixture 3
+        $script:lazyNeedsJiggle = $true
+        Invoke-ImaArticleRecord $lazyRequest
+        Check $true $script:lazySawRetreat 'provisional 100-percent bottom receives a bounded real back-scroll'
+        Check $true $script:lazyReturnedAfterRetreat 'the next batch loads only after returning from the provisional bottom'
+        Check 1 $script:invokedKeys.Count 'provisional-bottom recovery invokes the target only once'
+        Check 501 $script:invokedRuntimeIds[0] 'provisional-bottom recovery never invokes the same-title decoy'
+        Check $true ($script:lazyScrolls.Count -le 14) 'provisional-bottom recovery counts all scroll inputs toward its bound'
+
+        Reset-LazyArticleFixture 1000
+        $script:lazyMiddleOnly = $true
+        Invoke-ImaArticleRecord $lazyRequest
+        Check $true $script:lazySawZero 'stale 100-percent hint restarts from top once'
+        Check 1 @($script:lazyScrolls | Where-Object { $_ -eq 0 }).Count 'only one bounded top restart'
+        Check 1 $script:invokedKeys.Count 'middle target is recovered after bottom miss'
+        Check 501 $script:invokedRuntimeIds[0] 'top restart preserves exact identity and rejects same-title decoy'
+
+        Reset-LazyArticleFixture 1000
+        $script:lazyStalled = $true
+        $stalledTimer = [Diagnostics.Stopwatch]::StartNew()
+        $stalledError = ''
+        try { Invoke-ImaArticleRecord $lazyRequest } catch { $stalledError = $_.Exception.Message }
+        $stalledTimer.Stop()
+        Check $true (-not [string]::IsNullOrWhiteSpace($stalledError)) 'a loaded prefix with no further progress fails explicitly'
+        Check 0 $script:invokedKeys.Count 'no-progress recovery never opens the same-title decoy'
+        Check $true ($script:lazyScrolls.Count -gt 1 -and $script:lazyScrolls.Count -le 16) 'no-progress recovery stops after bounded attempts'
+        Check $true ($stalledTimer.ElapsedMilliseconds -lt 30000) 'no-progress recovery has a bounded overall duration'
+
+        Reset-LazyArticleFixture 2
+        $script:lazyWrongFolder = $true
+        $wrongPathError = ''
+        try { Invoke-ImaArticleRecord $lazyRequest } catch { $wrongPathError = $_.Exception.Message }
+        Check $true (-not [string]::IsNullOrWhiteSpace($wrongPathError)) 'a changed directory rejects progressive loading'
+        Check $true ($script:lazyPathChecks -ge 1) 'changed-directory rejection checks the actual directory'
+        Check 1 $script:lazyScrolls.Count 'wrong directory prevents any additional recovery scroll'
+        Check 0 $script:invokedKeys.Count 'wrong-directory recovery never invokes a card'
+
+        Reset-LazyArticleFixture 10
+        $script:lazyCancel = $true
+        $lazyCanceled = $false
+        try { Invoke-ImaArticleRecord $lazyRequest } catch [OperationCanceledException] { $lazyCanceled = $true }
+        Check $true $lazyCanceled 'cancellation while advancing lazy content propagates'
+        Check $true $script:lazyCancelObserved 'progressive loading checks cancellation after scroll progress'
+        Check 0 $script:invokedKeys.Count 'canceled progressive loading never invokes a card'
+        Check $true ($script:lazyScrolls.Count -le 2) 'cancellation prevents further scrolling'
+
+        Reset-LazyArticleFixture 2
+        $script:lazyAmbiguous = $true
+        $lazyAmbiguousError = ''
+        try { Invoke-ImaArticleRecord $lazyRequest } catch { $lazyAmbiguousError = $_.Exception.Message }
+        Check $true (-not [string]::IsNullOrWhiteSpace($lazyAmbiguousError)) 'duplicate identities appearing after lazy loading fail explicitly'
+        Check 0 $script:invokedKeys.Count 'post-load persistent duplicates never invoke either candidate'
+        Check 0 $script:invokedRuntimeIds.Count 'post-load ambiguity produces no physical element invocation'
+        $script:FolderName = $savedFolderName
+    }
 
     # Two distinct cards with identical names and source keys remain ambiguous.
     $script:invokedKeys = @(); $script:invokedRuntimeIds = @()
