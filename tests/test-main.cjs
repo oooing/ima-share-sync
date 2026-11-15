@@ -114,9 +114,10 @@ class Element {
     }
     this.scrollTop = 0;
   }
-  empty() { this.children = []; }
+  empty() { for (const child of this.children) child.parentElement = null; this.children = []; }
+  appendChild(child) { if (child.parentElement) child.parentElement.children = child.parentElement.children.filter(c => c !== child); child.parentElement = this; this.children.push(child); return child; }
   focus() { this.focused = true; }
-  querySelectorAll(selector) { return findElements(this, el => selector === "[data-nav-key]" ? !!el.dataset.navKey : el.tag === selector); }
+  querySelectorAll(selector) { return findElements(this, el => selector === "[data-nav-key]" ? !!el.dataset.navKey : selector === "[aria-label], [title]" ? !!(el["aria-label"] || el.title) : el.tag === selector); }
   querySelector(selector) { return this.querySelectorAll(selector)[0] || null; }
   setText(text) { this.text = text; }
   createDiv(options = {}) {
@@ -147,6 +148,11 @@ class Element {
     return this.dispatchEvent({ type: "click" });
   }
   setAttr(name, value) { this[name] = value; }
+  setAttribute(name, value) { this[name] = value; }
+  getAttribute(name) { return this[name] ?? null; }
+  get tagName() { return this.tag.toUpperCase(); }
+  removeAttribute(name) { delete this[name]; }
+  addClass(name) { this.toggleClass(name, true); }
   toggleClass(name, enabled) {
     const classes = new Set(this.cls.split(" ").filter(Boolean));
     if (enabled) classes.add(name); else classes.delete(name);
@@ -179,6 +185,7 @@ class Plugin {
     this.app = {
       vault: {
         getFiles: () => [...files.values()].filter(file => file instanceof TFile),
+        getAllLoadedFiles: () => [...files.values()],
         adapter: new FileSystemAdapter(),
         configDir: ".obsidian",
         getAbstractFileByPath: (path) => files.get(path) || null,
@@ -257,8 +264,9 @@ class ItemView {
 class Modal {
   constructor(app) {
     this.app = app;
-    this.titleEl = new Element();
-    this.contentEl = new Element();
+    this.modalEl = new Element();
+    this.titleEl = this.modalEl.createDiv();
+    this.contentEl = this.modalEl.createDiv();
   }
   open() { openedModals.push(this); this.onOpen(); }
   close() { this.onClose(); }
@@ -267,7 +275,7 @@ class Modal {
 class PluginSettingTab {
   constructor(app) {
     this.app = app;
-    this.containerEl = new Element();
+    this.containerEl = new Element("div", { attr: { "aria-label": "IMA Share Sync 插件设置" } });
   }
 }
 
@@ -291,8 +299,10 @@ function chainComponent() {
 class Setting {
   constructor(containerEl) {
     this.containerEl = containerEl;
+    this.controls = [];
     this.settingEl = containerEl.createDiv({ cls: "setting-item" });
     this.settingEl.setting = this;
+    this.controlEl = this.settingEl.createDiv({cls:"setting-item-control"});
   }
   setName(name) { this.name = name; settingNames.push(name); return this; }
   setHeading() { return this; }
@@ -302,7 +312,8 @@ class Setting {
     control.type = type;
     control.containerEl = this.settingEl;
     callback(control);
-    this.control = control;
+    this.controls.push(control);
+    this.control ??= control;
     settingControls.set(this.name, control);
     return this;
   }
@@ -328,6 +339,13 @@ function findElements(root, predicate) {
   const matches = predicate(root) ? [root] : [];
   for (const child of root.children) matches.push(...findElements(child, predicate));
   return matches;
+}
+
+function accessibleName(element) {
+  if (element["aria-label"]) return element["aria-label"];
+  let root = element;
+  while (root.parentElement) root = root.parentElement;
+  return (element["aria-labelledby"] || "").split(" ").map(id => findElements(root, el => el.id === id)[0]?.text || "").join(" ") || element.text;
 }
 
 function mountPluginView(plugin) {
@@ -477,6 +495,9 @@ Module._load = function (request, parent, isMain) {
   ImaSpeedSyncPlugin.prototype.openOperationCard = async () => null;
   assert.strictEqual(plugin.settings.destinationPath, "IMA Share Sync", "new installs should use the new default folder name");
   await plugin.onload();
+  plugin.identityProvider = undefined;
+  // This suite exercises legacy desktop extraction; the native ID adapter has separate API and E2E coverage.
+  plugin.identityProvider = undefined;
   assert.strictEqual(plugin.settings.contentMode, "speed-reader", "existing installs must retain the old title scope");
   assert.strictEqual(plugin.settings.allowForeground, false, "foreground fallback must be opt-in");
   assert.strictEqual(plugin.settings.destinationPath, "Target", "renaming must not replace an existing saved destination");
@@ -495,6 +516,8 @@ Module._load = function (request, parent, isMain) {
   const runtimeBytes = fs.readFileSync(runtimePath);
   assert.deepStrictEqual([...runtimeBytes.subarray(0, 3)], [0xef, 0xbb, 0xbf]);
   const embeddedScript = runtimeBytes.toString("utf8");
+  const sourceScript = fs.readFileSync(nodePath.join(__dirname, "../src/sync.ps1"), "utf8").replace(/^\uFEFF/, "");
+  assert.strictEqual(embeddedScript.replace(/^\uFEFF/, ""), sourceScript.replace(/\r\n/g, "\n"), "UTF-8 release bundling normalizes line endings and preserves the full PowerShell source and Chinese literals");
   assert.ok(embeddedScript.includes("function Invoke-ImaSync"));
   assert.ok(embeddedScript.includes("SkipTitlesBase64"));
   assert.ok(embeddedScript.includes("InputPath"));
@@ -720,11 +743,11 @@ Module._load = function (request, parent, isMain) {
   assert.equal(findElements(view.contentEl, el => el.text === "文章详情" || el.text === "在笔记中打开").length, 0);
   assert.ok(findElements(view.contentEl, el => el.text === "第 2 / 2 页 · 共 25 篇").length);
   assert.equal(view.contentEl.scrollTop, 87);
-  const backButton = findElements(view.contentEl, el => el["aria-label"] === "返回首页")[0];
+  const backButton = findElements(view.contentEl, el => el.tag === "button" && accessibleName(el) === "返回首页")[0];
   assert.equal(backButton.cls, "ima-share-sync-back-button");
-  assert.equal(backButton.title, "返回首页");
+  assert.equal(backButton.title, undefined, "back navigation must not produce a hover tooltip");
   assert.ok(findElements(backButton, el => el.icon === "arrow-left" && el["aria-hidden"] === "true").length);
-  findElements(view.contentEl, el => el["aria-label"] === "返回首页")[0].click();
+  findElements(view.contentEl, el => el.tag === "button" && accessibleName(el) === "返回首页")[0].click();
   assert.equal(findElements(view.contentEl, el => el.dataset.navKey === "文章")[0].focused, true);
   findElements(view.contentEl, el => el.dataset.navKey === "文章")[0].click();
   assert.ok(findElements(view.contentEl, el => el.text === "第 2 / 2 页 · 共 25 篇").length, "reentering preserves list pagination");
@@ -766,7 +789,9 @@ Module._load = function (request, parent, isMain) {
   assert.strictEqual(starLinks[0].href, "https://github.com/oooing/ima-share-sync");
   assert.strictEqual(starLinks[0].target, "_blank");
   assert.strictEqual(starLinks[0].rel, "noopener noreferrer");
-  assert.ok(starLinks[0]["aria-label"].includes("手动点星"));
+  assert.ok(accessibleName(starLinks[0]).includes("手动点星"));
+  assert.equal(findElements(settingsContainer, el => el["aria-label"] || el.title || el.cls === "ima-heat-tooltip").length, 0, "all settings surfaces must omit hover hint triggers");
+  assert.equal(accessibleName(findElements(settingsContainer, el => el.cls === "ima-flow-map")[0]), "从 IMA 来源到 Obsidian 保存位置", "the flow container retains its accessible name without a tooltip");
   assert.strictEqual(starLinks[0].listeners.size, 0, "use native link navigation, not an automatic Star API");
   assert.strictEqual(findElements(supportCards[0], (el) => el.icon === "star")[0]["aria-hidden"], "true");
   assert.strictEqual(execCount, 0, "opening settings must not start sync or an external process");
@@ -775,7 +800,11 @@ Module._load = function (request, parent, isMain) {
     "启动同步",
     "同步模式",
     "窗口置顶",
+    "来源",
+    "同步",
+    "保存",
     "知识库",
+    "同步范围",
     "源文件夹",
     "保存位置",
     "同名覆盖",
@@ -1018,6 +1047,7 @@ Module._load = function (request, parent, isMain) {
 
   const unloadPlugin = new ImaSpeedSyncPlugin();
   await unloadPlugin.onload();
+  unloadPlugin.identityProvider = undefined;
   unloadPlugin.ensureConsent = async () => true;
   let unloadExtractionStartedResolve;
   const unloadExtractionStarted = new Promise((resolve) => { unloadExtractionStartedResolve = resolve; });
@@ -1044,6 +1074,7 @@ Module._load = function (request, parent, isMain) {
   const generalPlugin = new ImaSpeedSyncPlugin();
   generalPlugin.loadData = async () => null;
   await generalPlugin.onload();
+  generalPlugin.identityProvider = undefined;
   assert.strictEqual(generalPlugin.settings.contentMode, "general", "new installs default to general text");
   assert.strictEqual(generalPlugin.settings.generalSelectionMode, "total", "new installs use one total quantity for the whole run");
   assert.strictEqual(generalPlugin.settings.titleFilterMode, "all");
@@ -1052,14 +1083,34 @@ Module._load = function (request, parent, isMain) {
   assert.strictEqual(generalPlugin.settings.maxFolderDepth, 1);
   assert.strictEqual(generalPlugin.settings.maxItems, 30);
   const generalTab = settingTabs.at(-1);
-  const renderedSettings = (tab) => findElements(tab.containerEl, el => !!el.setting).map(el => el.setting);
+  const settingsBeforeSearchIndex = JSON.stringify(generalPlugin.settings);
+  const callsBeforeSearchIndex = execCount;
+  const searchDefinitions = generalTab.getSettingDefinitions();
+  assert.equal(searchDefinitions.length, 1);
+  for (const query of ["知识库", "同名覆盖", "PDF", "Markdown", "自动同步"]) {
+    assert.ok(searchDefinitions[0].aliases.some(alias => alias.includes(query)), `settings search indexes ${query}`);
+  }
+  assert.equal(JSON.stringify(generalPlugin.settings), settingsBeforeSearchIndex);
+  assert.equal(execCount, callsBeforeSearchIndex, "search indexing never starts desktop work");
+  const hostRow = new Setting(generalTab.containerEl);
+  const cleanupSearchView = searchDefinitions[0].render(hostRow);
+  assert.ok(findElements(hostRow.settingEl, el => el.cls.includes("ima-settings-tabs-header")).length, "new host preserves custom tabs");
+  generalTab.switchTab("scope");
+  generalTab.openFlowSettings("source");
+  assert.ok(generalTab.flowModal, "new host retains source dialogs");
+  cleanupSearchView();
+  assert.equal(generalTab.flowModal, undefined, "declarative teardown closes child dialogs");
+  generalTab.switchTab("stats");
+  generalTab.display();
+  assert.ok(findElements(generalTab.containerEl, el => el.cls.includes("ima-settings-tabs-header")).length, "legacy display remains supported");
+  const renderedSettings = (tab) => [...new Set([tab.containerEl, ...Object.values(tab.flowPanels || {}).flatMap(p => [p.basic, p.advanced])].flatMap(root => findElements(root, el => !!el.setting).map(el => el.setting)))];
   const settingRow = (tab, name) => {
-    const rows = renderedSettings(tab).filter(row => row.name === name);
+    const rows = renderedSettings(tab).filter(row => row.name === name); if (name === "同步范围" && rows.length === 2) return rows[0];
     assert.strictEqual(rows.length, 1, `expected one currently rendered setting: ${name}`);
     return rows[0];
   };
   const settingControl = (tab, name) => settingRow(tab, name).control;
-  const advancedPanel = (tab) => findElements(tab.containerEl, el => el.cls === "ima-share-sync-advanced")[0];
+  const advancedPanel = (tab) => tab.flowPanels.source.advanced;
   const scopeText = (tab) => {
     const summary = findElements(tab.containerEl, el => el.cls === "ima-share-sync-scope-summary")[0];
     assert.ok(summary, "general settings expose a scope summary");
@@ -1076,7 +1127,7 @@ Module._load = function (request, parent, isMain) {
     assert.deepStrictEqual(control.options.map(option => option.value), Array.from({ length: limit }, (_, index) => String(index + 1)));
   }
   assert.ok(!renderedSettings(generalTab).some(row => /旧规则|正在沿用/.test(row.name)), "fresh installs have no legacy migration banner");
-  assert.strictEqual(advancedPanel(generalTab).open, false, "advanced controls start collapsed");
+  assert.ok(!generalTab.flowModal, "advanced controls are hidden until a flow dialog opens");
   const tabHeader = findElements(generalTab.containerEl, (el) => el.cls === "ima-settings-tabs-header")[0];
   assert.ok(tabHeader, "settings tab header rendered");
   const tabButtons = findElements(tabHeader, (el) => el.tag === "button");
@@ -1111,7 +1162,8 @@ Module._load = function (request, parent, isMain) {
   generalPlugin.settings.folderName = "New folder";
   generalTab.switchTab("stats");
   assert.equal(findElements(panelStats, el => el.cls.includes("ima-empty-unconfigured")).length, 0);
-  assert.ok(findElements(panelStats, el => el.text === "Updated knowledge base").length);
+  assert.ok(findElements(panelStats, el => el.cls === "ima-dash-title" && el.text === "IMA Share Sync").length);
+  assert.equal(findElements(panelStats, el => el.text === "Updated knowledge base").length, 0);
   const originalSync = generalPlugin.sync;
   generalPlugin.settings.notificationsEnabled = false;
   generalPlugin.sync = async () => {};
@@ -1135,64 +1187,104 @@ Module._load = function (request, parent, isMain) {
   assert.ok(!panelMarkdown.cls.includes("is-hidden"), "markdown panel visible after switch");
   assert.ok(panelStats.cls.includes("is-hidden"), "stats panel hidden after switch");
   await tabButtons[1].click();
-  assert.strictEqual(settingRow(generalTab, "每次检查数量").containerEl, panelScope);
-  for (const name of ["数量规则", "目录上限", "扫描深度", "排序规则", "标题筛选"]) {
-    assert.strictEqual(settingRow(generalTab, name).containerEl.parentElement, advancedPanel(generalTab), `${name} belongs inside advanced settings`);
+  const scopeGroupContent = (tab, kind) => tab.flowPanels[kind].basic;
+  assert.strictEqual(settingRow(generalTab, "每次检查数量").containerEl, scopeGroupContent(generalTab, "sync"));
+  for (const name of ["知识库", "同步范围", "源文件夹"]) {
+    assert.strictEqual(settingRow(generalTab, name).containerEl, scopeGroupContent(generalTab, "source"), `${name} belongs in the shared source card`);
   }
+  for (const name of ["数量规则", "目录上限", "扫描深度", "排序规则", "标题筛选"]) {
+    assert.strictEqual(settingRow(generalTab, name).containerEl, ["排序规则", "标题筛选"].includes(name) ? generalTab.flowPanels.sync.advanced : advancedPanel(generalTab), `${name} belongs inside advanced settings`);
+  }
+  const draftOf = tab => tab.getScopeDraft().values;
+  const childChoice = (tab, value) => findElements(tab.containerEl, el => el.role === "group" && accessibleName(el) === "子文件夹范围")[0].children.find(el => el.text === (value ? "包含子文件夹" : "仅当前文件夹")).click();
+  const scopeBeforeEditing = JSON.stringify(generalPlugin.settings);
   assert.strictEqual(generalPlugin.settings.syncScopeMode, "recent", "new installs default to recent mode");
   assert.strictEqual(scopeText(generalTab), "每次最多检查 30 个文件", "default scope text reflects recent mode");
   const allCard = findElements(generalTab.containerEl, el => el["data-mode"] === "all")[0];
   assert.ok(allCard, "all mode card rendered");
   await allCard.click();
-  assert.strictEqual(generalPlugin.savedData.syncScopeMode, "all");
+  assert.strictEqual(draftOf(generalTab).syncScopeMode, "all");
   assert.strictEqual(scopeText(generalTab), "全部同步（穷尽模式）：自动同步全部未下载文件");
   const recentCard = findElements(generalTab.containerEl, el => el["data-mode"] === "recent")[0];
   assert.ok(recentCard, "recent mode card rendered");
   await recentCard.click();
-  assert.strictEqual(generalPlugin.savedData.syncScopeMode, "recent");
+  assert.strictEqual(draftOf(generalTab).syncScopeMode, "recent");
   assert.strictEqual(scopeText(generalTab), "每次最多检查 30 个文件", "the primary hint reflects recent count when recent mode selected");
-  assert.strictEqual(advancedPanel(generalTab).querySelector("summary").text, "高级设置");
+  assert.equal(findElements(generalTab.containerEl, el => el["aria-haspopup"] === "dialog").length >= 3, true, "diagram exposes settings dialogs");
   assert.ok(!renderedSettings(generalTab).some(row => row.name === "包含子文件夹"), "remove the misleading include label");
   assert.strictEqual(settingRow(generalTab, "每次检查数量").description, "按时间从新到旧。");
-  assert.strictEqual(settingRow(generalTab, "包含子级").description, "同时检查并同步子文件夹中的文件。");
-  assert.strictEqual(settingRow(generalTab, "保留目录").containerEl, panelScope);
+
+  for (const name of ["保存位置", "同名覆盖", "保留目录"]) {
+    assert.strictEqual(settingRow(generalTab, name).containerEl, name === "保存位置" ? scopeGroupContent(generalTab, "save") : generalTab.flowPanels.save.advanced, `${name} belongs in the shared save card`);
+  }
   assert.strictEqual(settingControl(generalTab, "保留目录").value, true);
   const settingsExecCount = execCount;
   await settingControl(generalTab, "目录上限").change("2");
   await settingControl(generalTab, "扫描深度").change("2");
   await settingControl(generalTab, "每次检查数量").change("5");
-  await settingControl(generalTab, "源文件夹").change("  工作资料  ");
-  await settingControl(generalTab, "知识库").change("范围测试库");
-  assert.strictEqual(generalPlugin.savedData.maxFolders, 2);
-  assert.strictEqual(generalPlugin.savedData.maxFolderDepth, 2);
-  assert.strictEqual(generalPlugin.savedData.maxItems, 5);
-  assert.strictEqual(generalPlugin.savedData.generalSelectionMode, "total");
+  Object.assign(draftOf(generalTab), { folderName: "工作资料", knowledgeBaseName: "范围测试库" });
+  generalTab.updateScopeSummary();
+  assert.strictEqual(draftOf(generalTab).maxFolders, 2);
+  assert.strictEqual(draftOf(generalTab).maxFolderDepth, 2);
+  assert.strictEqual(draftOf(generalTab).maxItems, 5);
+  assert.strictEqual(draftOf(generalTab).generalSelectionMode, "total");
   assert.strictEqual(scopeText(generalTab), "每次最多检查 5 个文件", "folder names and depth must not leak into the primary hint");
   assert.match(scopeDetailsText(generalTab), /「工作资料」下：最近更新的最多 2 个文件夹，向下最多 2 层/);
-  await advancedPanel(generalTab).querySelector("summary").click();
-  assert.strictEqual(advancedPanel(generalTab).open, true);
+  generalTab.openFlowSettings("sync");
+  assert.equal(findElements(generalTab.containerEl, el => el.cls === "ima-dash-title")[0].text, "IMA Share Sync");
+  assert.equal(findElements(generalTab.containerEl, el => el.text === "本地文件按当前目录统计；同步计数从本次升级起记录，旧日志不估算。").length, 0);
+  for (const text of ["", "更改会自动保存", "已自动保存"]) {
+    generalTab.scopeStatus = text;
+    generalTab.renderScopeFooter();
+    assert.equal(generalTab.flowModal.status.text, "", "modal has no routine save hint");
+  }
+  generalTab.identitySaveFailed = true;
+  generalTab.scopeStatus = "未保存：模拟保存失败";
+  generalTab.renderScopeFooter();
+  assert.equal(generalTab.flowModal.status.text, "未保存：模拟保存失败", "save failures remain visible");
+  generalTab.identitySaveFailed = false;
+  generalTab.scopeStatus = "";
+  generalTab.renderScopeFooter();
+  await findElements(generalTab.flowModal.contentEl, el => el.text === "高级设置")[0].click();
+  assert.equal(generalTab.flowModal.level, "advanced");
   await settingControl(generalTab, "标题筛选").change("contains");
-  assert.strictEqual(advancedPanel(generalTab).open, true, "filter rerenders retain the expanded advanced section");
+  assert.equal(generalTab.flowModal.level, "advanced", "filter rerenders keep the dialog on advanced settings");
   assert.strictEqual(settingControl(generalTab, "筛选内容").type, "text");
   await settingControl(generalTab, "筛选内容").change("计划");
-  assert.strictEqual(generalPlugin.savedData.titleFilter, "计划");
+  assert.strictEqual(draftOf(generalTab).titleFilter, "计划");
   await settingControl(generalTab, "标题筛选").change("all");
-  assert.strictEqual(advancedPanel(generalTab).open, true);
+  assert.equal(generalTab.flowModal.level, "advanced");
   assert.ok(!renderedSettings(generalTab).some(row => row.name === "筛选内容"));
-  await advancedPanel(generalTab).querySelector("summary").click();
+  await findElements(generalTab.flowModal.contentEl, el => el.text === "基本设置")[0].click();
   await settingControl(generalTab, "标题筛选").change("prefix");
-  assert.strictEqual(advancedPanel(generalTab).open, false, "filter rerenders also retain an explicitly collapsed section");
+  assert.equal(generalTab.flowModal.level, "basic", "filter rerenders keep the selected basic tab");
+  assert.equal(accessibleName(generalTab.containerEl), "IMA Share Sync 插件设置", "rerendering preserves the host root name after its old hidden label is removed");
+  for (const root of [generalTab.containerEl, generalTab.flowModal.modalEl]) {
+    assert.equal(findElements(root, el => el["aria-label"] || el.title).length, 0, "rerendered settings and modal stay free of hover hint attributes");
+  }
+  generalTab.flowModal.close();
   await settingControl(generalTab, "标题筛选").change("all");
-  await settingControl(generalTab, "包含子级").change(false);
-  assert.strictEqual(generalPlugin.settings.maxFolderDepth, 2, "total mode remembers the configured depth when traversal is disabled");
-  assert.strictEqual(generalPlugin.savedData.maxFolderDepth, 2);
-  assert.strictEqual(generalPlugin.savedData.includeSubfolders, false);
+  await childChoice(generalTab, false);
+  assert.strictEqual(draftOf(generalTab).maxFolderDepth, 2, "total mode remembers the configured depth when traversal is disabled");
+  assert.strictEqual(draftOf(generalTab).maxFolderDepth, 2);
+  assert.strictEqual(draftOf(generalTab).includeSubfolders, false);
   assert.strictEqual(settingControl(generalTab, "扫描深度").disabled, true);
   assert.strictEqual(settingControl(generalTab, "目录上限").disabled, true);
   assert.strictEqual(scopeText(generalTab), "每次最多检查 5 个文件");
   assert.match(scopeDetailsText(generalTab), /只检查「工作资料」内的文件，不进入子文件夹/);
-  assert.strictEqual(settingRow(generalTab, "包含子级").description, "仅同步当前目录，不进入子文件夹。");
+
   assert.strictEqual(execCount, settingsExecCount, "settings changes must not run desktop automation");
+
+  assert.equal(JSON.stringify(generalPlugin.settings), scopeBeforeEditing, "all scope controls remain draft-only before Save");
+  generalPlugin.ensureConsent = async () => true;
+  const runnerBeforeScopeSave = generalPlugin.runPowerShell;
+  generalPlugin.runPowerShell = async (_n, _skip, settings, _run, _ids, operation) => {
+    assert.equal(operation, "inspect-source", "saving source changes never downloads");
+    return JSON.stringify({items:[],errors:[],sourceInspection:{knowledgeBaseName:settings.knowledgeBaseName,folderName:settings.folderName,breadcrumb:["内容(1)",settings.folderName],stableFolderId:null,identityMode:"explicit-confirmation"}});
+  };
+  await generalPlugin.saveScopeDraft(generalTab.getScopeDraft());
+  generalPlugin.runPowerShell = runnerBeforeScopeSave;
+  assert.equal(generalPlugin.settings.maxItems, 5, "Save persists the staged count");
 
   const runScopeFixture = async (scopePlugin) => {
     scopePlugin.ensureConsent = async () => true;
@@ -1206,8 +1298,12 @@ Module._load = function (request, parent, isMain) {
   const totalReload = new ImaSpeedSyncPlugin();
   totalReload.loadData = async () => JSON.parse(JSON.stringify(generalPlugin.savedData));
   await totalReload.onload();
+  totalReload.identityProvider = undefined;
   const totalReloadTab = settingTabs.at(-1);
   totalReloadTab.display();
+  assert.ok(findElements(totalReloadTab.containerEl, el => el.tag === "button" && accessibleName(el) === "选择知识库").length);
+  assert.ok(findElements(totalReloadTab.containerEl, el => el.tag === "button" && accessibleName(el) === "选择源文件夹").length);
+  assert.equal(settingRow(totalReloadTab, "知识库").controls.length, 0, "name is a whole-field chooser, not an editable text box");
   for (const key of ["syncScopeMode", "generalSelectionMode", "maxItems", "maxFolders", "maxFolderDepth", "includeSubfolders", "folderName", "titleFilterMode", "titleFilter"]) {
     assert.deepStrictEqual(totalReload.settings[key], generalPlugin.settings[key], `${key} persists after reload`);
   }
@@ -1216,7 +1312,8 @@ Module._load = function (request, parent, isMain) {
   assert.strictEqual(disabledScope.includeSubfolders, false);
   assert.strictEqual(disabledScope.maxFolderDepth, 0, "the runner gets effective depth zero while the remembered depth stays two");
   assert.strictEqual(totalReload.settings.maxFolderDepth, 2);
-  await settingControl(totalReloadTab, "包含子级").change(true);
+  await childChoice(totalReloadTab, true);
+  await totalReload.saveScopeDraft(totalReloadTab.getScopeDraft());
   assert.strictEqual(totalReload.settings.maxFolderDepth, 2, "reenabling restores the previous depth after a restart");
   assert.strictEqual(settingControl(totalReloadTab, "扫描深度").value, "2");
   assert.strictEqual(settingControl(totalReloadTab, "扫描深度").disabled, false);
@@ -1243,6 +1340,7 @@ Module._load = function (request, parent, isMain) {
     const { expectedDepth, ...data } = saved;
     migrated.loadData = async () => data;
     await migrated.onload();
+  migrated.identityProvider = undefined;
     assert.strictEqual(migrated.settings.generalSelectionMode, "per-folder", "existing configurations without a mode marker retain per-folder quantities");
     assert.strictEqual(migrated.settings.maxFolderDepth, expectedDepth);
     assert.strictEqual(migrated.settings.maxFolders, saved.maxFolders ?? 1);
@@ -1258,6 +1356,7 @@ Module._load = function (request, parent, isMain) {
   const legacyScopePlugin = new ImaSpeedSyncPlugin();
   legacyScopePlugin.loadData = async () => ({ ...legacySettings });
   await legacyScopePlugin.onload();
+  legacyScopePlugin.identityProvider = undefined;
   const legacyScopeTab = settingTabs.at(-1);
   legacyScopeTab.display();
   for (const [key, value] of Object.entries(legacySettings)) {
@@ -1277,6 +1376,8 @@ Module._load = function (request, parent, isMain) {
   const beforeSwitch = { ...legacyScopePlugin.settings };
   const executionsBeforeSwitch = execCount;
   await switchRow.control.click();
+  assert.deepEqual(legacyScopePlugin.settings, beforeSwitch, "quantity migration waits for Save");
+  await legacyScopePlugin.saveScopeDraft(legacyScopeTab.getScopeDraft());
   assert.deepStrictEqual(legacyScopePlugin.settings, { ...beforeSwitch, generalSelectionMode: "total" }, "switching quantity semantics must not mutate any other settings");
   assert.strictEqual(execCount, executionsBeforeSwitch, "the migration action does not execute a sync");
   assert.strictEqual(settingControl(legacyScopeTab, "每次检查数量").value, "9");
@@ -1286,6 +1387,7 @@ Module._load = function (request, parent, isMain) {
   const quantityReload = new ImaSpeedSyncPlugin();
   quantityReload.loadData = async () => JSON.parse(JSON.stringify(legacyScopePlugin.savedData));
   await quantityReload.onload();
+  quantityReload.identityProvider = undefined;
   assert.deepStrictEqual(quantityReload.settings, { ...beforeSwitch, generalSelectionMode: "total" }, "the opt-in quantity rule and all other options persist together");
   quantityReload.onunload();
   legacyScopePlugin.onunload();
@@ -1293,9 +1395,11 @@ Module._load = function (request, parent, isMain) {
   const legacyDisabled = new ImaSpeedSyncPlugin();
   legacyDisabled.loadData = async () => ({ ...legacySettings });
   await legacyDisabled.onload();
+  legacyDisabled.identityProvider = undefined;
   const legacyDisabledTab = settingTabs.at(-1);
   legacyDisabledTab.display();
-  await settingControl(legacyDisabledTab, "包含子级").change(false);
+  await childChoice(legacyDisabledTab, false);
+  await legacyDisabled.saveScopeDraft(legacyDisabledTab.getScopeDraft());
   assert.strictEqual(legacyDisabled.settings.maxFolderDepth, 0, "legacy mode retains its depth-zero opt-out behavior");
   assert.strictEqual(legacyDisabled.savedData.maxFolderDepth, 0);
   const legacyDisabledPayload = await runScopeFixture(legacyDisabled);
@@ -1373,10 +1477,14 @@ Module._load = function (request, parent, isMain) {
   for (const maxFolderDepth of [-1, 6, 1.5, NaN]) {
     assert.throws(() => generalPlugin.validateSettings({ ...generalPlugin.settings, maxFolderDepth }), /向下查找层数/);
   }
-  assert.strictEqual(generalPlugin.validateSettings({ ...generalPlugin.settings, includeSourceFolder: true }), "General/普通文章");
-  assert.strictEqual(generalPlugin.validateSettings({ ...generalPlugin.settings, includeSourceFolder: false }), "General");
-  assert.strictEqual(generalPlugin.getEffectiveDestinationPath({ ...generalPlugin.settings, destinationPath: "Vault/Reports", folderName: "2026年10月", includeSourceFolder: true }), "Vault/Reports/2026年10月");
-  assert.strictEqual(generalPlugin.getEffectiveDestinationPath({ ...generalPlugin.settings, destinationPath: "Vault/Reports", folderName: "2026年10月", includeSourceFolder: false }), "Vault/Reports");
+  // Legacy path composition is tested on explicitly unbound settings. Bound
+  // sources retain their destination until the user changes the local target.
+  const unboundGeneralSettings = { ...generalPlugin.settings, sourceBinding: undefined };
+  assert.strictEqual(generalPlugin.validateSettings({ ...unboundGeneralSettings, includeSourceFolder: true }), "General/普通文章");
+  assert.strictEqual(generalPlugin.validateSettings({ ...unboundGeneralSettings, includeSourceFolder: false }), "General");
+  assert.strictEqual(generalPlugin.getEffectiveDestinationPath({ ...unboundGeneralSettings, destinationPath: "Vault/Reports", folderName: "2026年10月", includeSourceFolder: true }), "Vault/Reports/2026年10月");
+  assert.strictEqual(generalPlugin.getEffectiveDestinationPath({ ...unboundGeneralSettings, destinationPath: "Vault/Reports", folderName: "2026年10月", includeSourceFolder: false }), "Vault/Reports");
+  assert.strictEqual(generalPlugin.getEffectiveDestinationPath({ ...generalPlugin.settings, folderName: "2026年10月", includeSourceFolder: true }), "General", "a remote name change cannot move a bound destination");
   generalPlugin.runPowerShell = nativeRunPowerShell;
   nextSpawnBehavior = { outputText: JSON.stringify({ items: [], skippedTitles: [], errors: [] }) };
   await generalPlugin.sync(true);
@@ -1393,6 +1501,7 @@ Module._load = function (request, parent, isMain) {
   const folderPlugin = new ImaSpeedSyncPlugin();
   folderPlugin.loadData = async () => null;
   await folderPlugin.onload();
+  folderPlugin.identityProvider = undefined;
   Object.assign(folderPlugin.settings, { knowledgeBaseName: "Test KB", folderName: "Month", destinationPath: "FolderTest", hasConsented: true,
     notificationsEnabled: false, contentMode: "general", includeSubfolders: true, includeSourceFolder: false });
   folderPlugin.ensureConsent = async () => true;
@@ -1504,6 +1613,7 @@ Module._load = function (request, parent, isMain) {
   // Exercise notification policy against the built plugin without operating the desktop.
   const notificationPlugin = new ImaSpeedSyncPlugin();
   await notificationPlugin.onload();
+  notificationPlugin.identityProvider = undefined;
   mountPluginView(notificationPlugin);
   const notificationTab = settingTabs.at(-1);
   assert.deepStrictEqual([
@@ -1565,6 +1675,7 @@ Module._load = function (request, parent, isMain) {
   const reloadedPlugin = new ImaSpeedSyncPlugin();
   reloadedPlugin.loadData = async () => savedNotificationData;
   await reloadedPlugin.onload();
+  reloadedPlugin.identityProvider = undefined;
   assert.strictEqual(reloadedPlugin.settings.notificationsEnabled, false);
   assert.deepStrictEqual(reloadedPlugin.syncReports, notificationPlugin.syncReports);
   assert.strictEqual(notices.length, noticeBaseline, "loading history never replays a toast");
@@ -1662,6 +1773,7 @@ Module._load = function (request, parent, isMain) {
   const malformedPlugin = new ImaSpeedSyncPlugin();
   malformedPlugin.loadData = async () => ({ ...savedNotificationData, notificationsEnabled: "false", syncReports: [null, { status: "other" }, { ...savedNotificationData.syncReports[0], errors: [null, {}, { title: "<script>", message: "<b>plain text</b>" }] }] });
   await malformedPlugin.onload();
+  malformedPlugin.identityProvider = undefined;
   mountPluginView(malformedPlugin);
   assert.strictEqual(malformedPlugin.settings.notificationsEnabled, true, "invalid toggle values recover to safe defaults");
   assert.strictEqual(malformedPlugin.syncReports.length, 1);
@@ -1683,6 +1795,7 @@ Module._load = function (request, parent, isMain) {
 
   const cardPlugin = new ImaSpeedSyncPlugin();
   await cardPlugin.onload();
+  cardPlugin.identityProvider = undefined;
   cardPlugin.openOperationCard = nativeOpenOperationCard;
   let workerStarts = 0;
   cardPlugin.runPowerShell = async () => { workerStarts++; return JSON.stringify({ items: [], skippedTitles: ["已存文章"], errors: [] }); };
@@ -1797,6 +1910,7 @@ Module._load = function (request, parent, isMain) {
 
   const unreadPlugin = new ImaSpeedSyncPlugin();
   await unreadPlugin.onload();
+  unreadPlugin.identityProvider = undefined;
   mountPluginView(unreadPlugin);
   const failedReport = () => ({ finishedAt: 1234567890, interactive: false, status: "failed", summary: "同一异常", errors: [{ title: "测试", message: "未读取完整" }] });
   await unreadPlugin.recordSyncReport(failedReport());
@@ -1813,15 +1927,18 @@ Module._load = function (request, parent, isMain) {
   const unreadReload = new ImaSpeedSyncPlugin();
   unreadReload.loadData = async () => unreadPlugin.savedData;
   await unreadReload.onload();
+  unreadReload.identityProvider = undefined;
   assert.ok(unreadReload.hasUnreadSyncFailure(), "unread errors still survive reload");
   const legacyUnread = new ImaSpeedSyncPlugin();
   legacyUnread.loadData = async () => ({ syncReports: [failedReport()] });
   await legacyUnread.onload();
+  legacyUnread.identityProvider = undefined;
   assert.ok(legacyUnread.hasUnreadSyncFailure(), "old records without read metadata migrate as unread");
   await legacyUnread.markSyncReportsRead(legacyUnread.syncReports);
   const migratedReload = new ImaSpeedSyncPlugin();
   migratedReload.loadData = async () => legacyUnread.savedData;
   await migratedReload.onload();
+  migratedReload.identityProvider = undefined;
   assert.equal(migratedReload.hasUnreadSyncFailure(), false, "legacy read acknowledgment persists too");
   console.log("PASS: per-run unread badges, icon/history/toast/native acknowledgment, migration, persistence and newer-error isolation");
   const historyPlugin = new ImaSpeedSyncPlugin();
@@ -1832,6 +1949,7 @@ Module._load = function (request, parent, isMain) {
   }));
   historyPlugin.loadData = async () => ({ syncReports: historyFixtures, notificationsEnabled: false });
   await historyPlugin.onload();
+  historyPlugin.identityProvider = undefined;
   const historyView = mountPluginView(historyPlugin);
   const inlineHistoryContainer = historyView.contentEl;
   const modalCountBeforeHistory = openedModals.length;
@@ -1844,7 +1962,7 @@ Module._load = function (request, parent, isMain) {
   assert.equal(revealedLeaf, existingHistoryLeaf, "error/history links reveal the existing plugin sidebar");
   assert.ok(findElements(inlineHistoryContainer, el => el.tag === "h4" && el.text === "同步日志").length, "history is mounted inside the plugin panel");
   const recordsOnPage = () => findElements(historyModal.contentEl, el => el.tag === "details");
-  const historyButton = (text) => findElements(historyModal.contentEl, el => el.tag === "button" && (text === "‹ 返回" ? el["aria-label"] === "返回首页" : el.text === text))[0];
+  const historyButton = (text) => findElements(historyModal.contentEl, el => el.tag === "button" && (text === "‹ 返回" ? accessibleName(el) === "返回首页" : el.text === text))[0];
   assert.equal(recordsOnPage().length, 20);
   assert.ok(recordsOnPage().every(el => !el.open), "history details start collapsed");
   assert.equal(historyButton("上一页").disabled, true);
@@ -1873,6 +1991,7 @@ Module._load = function (request, parent, isMain) {
   const historyReload = new ImaSpeedSyncPlugin();
   historyReload.loadData = async () => JSON.parse(JSON.stringify(historyPlugin.savedData));
   await historyReload.onload();
+  historyReload.identityProvider = undefined;
   mountPluginView(historyReload);
   assert.equal(historyReload.syncReports.length, 45, "all pages survive restart");
   await historyReload.recordSyncReport({ finishedAt: 2100000000000, interactive: false, status: "failed", summary: "新错误", errors: [{ title: "新文章", message: "新的原因" }] });
@@ -1891,6 +2010,7 @@ Module._load = function (request, parent, isMain) {
   const emptyHistory = new ImaSpeedSyncPlugin();
   emptyHistory.loadData = async () => null;
   await emptyHistory.onload();
+  emptyHistory.identityProvider = undefined;
   const emptyView = mountPluginView(emptyHistory);
   const emptyStatus = emptyView.contentEl;
   findElements(emptyStatus, el => el.text === "同步日志（0）")[0].click();
@@ -1910,6 +2030,7 @@ Module._load = function (request, parent, isMain) {
   const e2ePlugin = new ImaSpeedSyncPlugin();
   e2ePlugin.loadData = async () => null;
   await e2ePlugin.onload();
+  e2ePlugin.identityProvider = undefined;
   const e2eTargetFolder = new TFolder("E2ETarget", []);
   files.set("E2ETarget", e2eTargetFolder);
   e2ePlugin.settings = {
@@ -2003,6 +2124,7 @@ Module._load = function (request, parent, isMain) {
     showOperationAfter: true,
   };
   await stalledPlugin.onload();
+  stalledPlugin.identityProvider = undefined;
 
   const stalledItems = Array.from({ length: 16 }, (_, i) => ({
     sourceTitle: `202610-研报-${i + 1}`,
@@ -2037,6 +2159,7 @@ Module._load = function (request, parent, isMain) {
   // i18n 多语言支持测试
   const i18nPlugin = new ImaSpeedSyncPlugin();
   await i18nPlugin.onload();
+  i18nPlugin.identityProvider = undefined;
   const i18nTab = settingTabs.at(-1);
 
   // 1. 默认或中文环境
@@ -2107,3 +2230,5 @@ Module._load = function (request, parent, isMain) {
   console.error(error);
   process.exitCode = 1;
 });
+
+

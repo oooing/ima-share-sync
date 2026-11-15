@@ -10,11 +10,11 @@
 
 <p><a href="https://obsidian.md/plugins?id=ima-speed-sync"><strong>Community listing →</strong></a></p>
 
-<p><a href="https://github.com/oooing/ima-share-sync/blob/main/docs/GUIDE.md">Manual setup</a> · <a href="https://github.com/oooing/ima-share-sync/releases/tag/0.3.6">Download files</a></p>
+<p><a href="https://github.com/oooing/ima-share-sync/blob/main/docs/GUIDE.md">Manual setup</a> · <a href="https://github.com/oooing/ima-share-sync/releases/tag/0.3.19">Download files</a></p>
 
 <p><sub>Windows 10+ · Obsidian 1.11.4+ · Installed and signed-in IMA desktop</sub></p>
 
-<p>Version 0.3.6 is released. Install from the Community listing, or follow the guide for manual installation.</p>
+<p>Version 0.3.19 is released. Install from the Community listing, or follow the guide for manual installation.</p>
 
 <p><a href="#who-it-helps">Who it helps</a> · <a href="#what-it-does">What it does</a></p>
 
@@ -155,5 +155,7 @@ Use Chinese or English for settings, or follow Obsidian's language. Some sidebar
 ### Start collecting
 
 Keep your next good find on your own computer.
+
+**Desktop permissions:** Uses PowerShell and local file access to work with IMA and save files. Foreground interaction may show IMA windows. These necessary capabilities can remain visible as marketplace review cautions. Save only material you are permitted to copy or download.
 
 **[Community listing →](https://obsidian.md/plugins?id=ima-speed-sync)** · [Manual setup](https://github.com/oooing/ima-share-sync/blob/main/docs/GUIDE.md)

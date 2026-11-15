@@ -101,6 +101,48 @@ export interface I18nStrings {
   kbDesc: string;
   kbPlaceholder: string;
   sourceFolderName: string;
+  sourceChoose: string;
+  sourceSelectionTitle: string;
+  sourceSection: string;
+  syncSection: string;
+  saveSection: string;
+  sourceRange: string;
+  sourceRangeDesc: string;
+  sourceRangeFolder: string;
+  sourceRangeKnowledgeBase: string;
+  sourceCatalogRead: string;
+  sourceCatalogReading: string;
+  sourceCatalogVisible: string;
+  sourceCatalogFolders: string;
+  sourceCatalogEmpty: string;
+  sourceCatalogAmbiguous: string;
+  sourceCatalogPrompt: string;
+  sourceCatalogChooseKnowledgeBase: string;
+  sourceCatalogFailed: string;
+  sourceSelectionRename: string;
+  sourceSelectionRenameDesc: string;
+  sourceSelectionConfirm: string;
+  sourceSelectionSaved: string;
+  sourceSelectionPending: string;
+  sourceRebind: string;
+  sourceRebindNeeded: string;
+  sourceRebindOld: string;
+  sourceRebindNew: string;
+  sourceRebindKnowledgeBase: string;
+  sourceRebindDestination: string;
+  sourceRebindCheck: string;
+  sourceRebindChecking: string;
+  sourceRebindConfirm: string;
+  sourceRebindCancel: string;
+  sourceRebindBusy: string;
+  sourceRebindChanged: string;
+  sourceRebindVerified: string;
+  sourceRebindSaved: string;
+  sourceResume: string;
+  sourceResumeDiscard: string;
+  sourceResumeInvalid: string;
+  sourceResumeUnidentified: string;
+  sourceResumeDesc: (count: number, unknown: number) => string;
   sourceFolderDesc: string;
   sourceFolderPlaceholder: string;
   destPathName: string;
@@ -225,7 +267,7 @@ export const zhStrings: I18nStrings = {
 
   // 标签栏
   tabStats: "使用统计",
-  tabScope: "同步范围",
+  tabScope: "同步与保存",
   tabMarkdown: "文档转换",
   tabNotifications: "通知提醒",
   tabGeneral: "基础设置",
@@ -290,7 +332,7 @@ export const zhStrings: I18nStrings = {
   langZh: "简体中文",
   langEn: "English",
   autoSyncName: "启动同步",
-  autoSyncDesc: "软件启动后自动检查并同步。",
+  autoSyncDesc: "启动后自动同步；Windows 锁屏时等待解锁。",
   contentModeName: "同步模式",
   contentModeDesc: "支持通用同步与速看兼容排版。",
   contentModeGeneral: "通用模式",
@@ -304,10 +346,52 @@ export const zhStrings: I18nStrings = {
 
   // 同步范围 (Scope)
   kbName: "知识库",
-  kbDesc: "填写 IMA 侧边栏的知识库名。",
+  kbDesc: "选择或填写 IMA 中的知识库。",
   kbPlaceholder: "例如：我的知识库",
   sourceFolderName: "源文件夹",
-  sourceFolderDesc: "填写 IMA 中要同步的文件夹名。",
+  sourceChoose: "选择",
+  sourceSelectionTitle: "同步来源",
+  sourceSection: "来源",
+  syncSection: "同步",
+  saveSection: "保存",
+  sourceRange: "同步范围",
+  sourceRangeDesc: "同步整个知识库，或只同步指定文件夹。",
+  sourceRangeFolder: "指定文件夹",
+  sourceRangeKnowledgeBase: "整个知识库",
+  sourceCatalogRead: "从 IMA 读取",
+  sourceCatalogReading: "正在读取来源列表…",
+  sourceCatalogVisible: "以下为 IMA 当前可见的知识库；未显示的名称可手动填写。",
+  sourceCatalogFolders: "以下为所选知识库的顶层文件夹。",
+  sourceCatalogEmpty: "未找到可选项。可手动填写完整名称，再检查来源。",
+  sourceCatalogAmbiguous: "部分同名条目无法区分，已从可选列表中排除。",
+  sourceCatalogPrompt: "已读取的来源",
+  sourceCatalogChooseKnowledgeBase: "请先选择或填写知识库名称。",
+  sourceCatalogFailed: "未能完整读取来源列表，请重试。",
+  sourceSelectionRename: "这是原知识库改名",
+  sourceSelectionRenameDesc: "仅在仍是原知识库时开启，沿用原去重记录；切换到其他知识库请保持关闭。",
+  sourceSelectionConfirm: "确认来源",
+  sourceSelectionSaved: "来源设置已保存，原文件和同步记录已保留。",
+  sourceSelectionPending: "还有待续跑的原任务。切换同步范围前，请先完成或放弃该任务。",
+  sourceRebind: "重新绑定",
+  sourceRebindNeeded: "来源目录已变化或无法确认。请在源文件夹设置中重新绑定；已完成的内容会保留。",
+  sourceRebindOld: "原文件夹",
+  sourceRebindNew: "新文件夹名称",
+  sourceRebindKnowledgeBase: "新的知识库名称",
+  sourceRebindDestination: "继续保存到",
+  sourceRebindCheck: "检查来源",
+  sourceRebindChecking: "正在检查来源…",
+  sourceRebindConfirm: "确认重新绑定",
+  sourceRebindCancel: "取消",
+  sourceRebindBusy: "请先结束当前同步或来源检查。",
+  sourceRebindChanged: "来源或设置已变化，请重新检查。",
+  sourceRebindVerified: "已验证路径",
+  sourceRebindSaved: "来源已重新绑定，保存位置和同步记录已保留。",
+  sourceResume: "继续未完成项",
+  sourceResumeDiscard: "放弃续跑",
+  sourceResumeInvalid: "未完成批次与当前来源或保存位置不一致。请恢复原设置或放弃续跑后重新检查。",
+  sourceResumeUnidentified: "剩余条目没有稳定来源 ID，无法安全自动续跑。请放弃续跑后重新检查来源。",
+  sourceResumeDesc: (count, unknown) => `保留 ${count} 个未完成目标${unknown ? `，另有 ${unknown} 个条目无法安全自动恢复` : ""}。手动同步仅处理这批；放弃续跑不会删除已保存文件。`,
+  sourceFolderDesc: "选择或填写要同步的顶层文件夹。",
   sourceFolderPlaceholder: "例如：每日速看",
   destPathName: "保存位置",
   destPathDesc: "同步内容在当前仓库的存放目录。",
@@ -319,9 +403,9 @@ export const zhStrings: I18nStrings = {
 
   modeAllTitle: "全部同步",
   modeAllDesc: "扫描并下载所有未同步的文件。",
-  modeRecentTitle: "同步最新",
-  modeRecentDesc: (count) => `最新 ${count} 份文件（默认）`,
-  cascadeHeader: "同步最新 / 数量预设",
+  modeRecentTitle: "仅同步新增",
+  modeRecentDesc: (count) => `检查最新 ${count} 个文件，跳过已同步`,
+  cascadeHeader: "仅同步新增 / 检查数量",
   cascadePreset: (count) => `最新 ${count} 份文件`,
   badgeDefault: "默认",
   cascadeCustomPrefix: "最新的",
@@ -431,7 +515,7 @@ export const enStrings: I18nStrings = {
 
   // Tabs
   tabStats: "Overview",
-  tabScope: "Sync Scope",
+  tabScope: "Sync and save",
   tabMarkdown: "Convert",
   tabNotifications: "Notices",
   tabGeneral: "General",
@@ -496,7 +580,7 @@ export const enStrings: I18nStrings = {
   langZh: "简体中文",
   langEn: "English",
   autoSyncName: "Startup Sync",
-  autoSyncDesc: "Check and sync automatically after Obsidian starts.",
+  autoSyncDesc: "Sync after startup; wait while Windows is locked.",
   contentModeName: "Sync Mode",
   contentModeDesc: "Support general sync and legacy brief layouts.",
   contentModeGeneral: "General",
@@ -510,10 +594,52 @@ export const enStrings: I18nStrings = {
 
   // Scope Settings
   kbName: "Knowledge Base",
-  kbDesc: "Knowledge base name in IMA sidebar.",
+  kbDesc: "Choose or enter a knowledge base in IMA.",
   kbPlaceholder: "e.g. My Knowledge Base",
   sourceFolderName: "Source Folder",
-  sourceFolderDesc: "Folder name in IMA to sync.",
+  sourceChoose: "Choose",
+  sourceSelectionTitle: "Sync source",
+  sourceSection: "Source",
+  syncSection: "Sync",
+  saveSection: "Save",
+  sourceRange: "Source range",
+  sourceRangeDesc: "Sync the knowledge base or a selected folder.",
+  sourceRangeFolder: "Selected folder",
+  sourceRangeKnowledgeBase: "Knowledge base",
+  sourceCatalogRead: "Read from IMA",
+  sourceCatalogReading: "Reading sources…",
+  sourceCatalogVisible: "These knowledge bases are currently visible in IMA. You can enter a name manually.",
+  sourceCatalogFolders: "Top-level folders in the selected knowledge base.",
+  sourceCatalogEmpty: "No choices found. Enter the full name and check the source.",
+  sourceCatalogAmbiguous: "Ambiguous names have been excluded from the list.",
+  sourceCatalogPrompt: "Available sources",
+  sourceCatalogChooseKnowledgeBase: "Choose or enter a knowledge base first.",
+  sourceCatalogFailed: "The source list could not be verified. Try again.",
+  sourceSelectionRename: "This is a renamed knowledge base",
+  sourceSelectionRenameDesc: "Enable only for the same renamed knowledge base to keep its deduplication scope. Leave off for a different knowledge base.",
+  sourceSelectionConfirm: "Confirm source",
+  sourceSelectionSaved: "Source settings saved. Existing files and sync history are preserved.",
+  sourceSelectionPending: "A previous batch is pending. Finish or discard it before changing the source range.",
+  sourceRebind: "Rebind source",
+  sourceRebindNeeded: "The source folder changed or could not be confirmed. Rebind it in Source Folder settings. Completed items are preserved.",
+  sourceRebindOld: "Previous folder",
+  sourceRebindNew: "New folder name",
+  sourceRebindKnowledgeBase: "New knowledge base name",
+  sourceRebindDestination: "Keep saving to",
+  sourceRebindCheck: "Check source",
+  sourceRebindChecking: "Checking source…",
+  sourceRebindConfirm: "Confirm rebind",
+  sourceRebindCancel: "Cancel",
+  sourceRebindBusy: "Finish the current sync or source check first.",
+  sourceRebindChanged: "The source or settings changed. Check the source again.",
+  sourceRebindVerified: "Verified path",
+  sourceRebindSaved: "Source rebound. The save location and sync history are preserved.",
+  sourceResume: "Resume pending items",
+  sourceResumeDiscard: "Discard pending batch",
+  sourceResumeInvalid: "The pending batch does not match the current source or save location. Restore the previous settings or discard the batch before a new scan.",
+  sourceResumeUnidentified: "The remaining items have no stable source IDs and cannot be resumed safely. Discard the pending batch before checking the source again.",
+  sourceResumeDesc: (count, unknown) => `${count} targets remain${unknown ? `; ${unknown} more cannot be resumed safely` : ""}. Manual sync only processes this batch. Discarding it keeps saved files.`,
+  sourceFolderDesc: "Choose or enter a top-level folder to sync.",
   sourceFolderPlaceholder: "e.g. Daily Brief",
   destPathName: "Save Location",
   destPathDesc: "Storage folder inside current vault.",
@@ -525,8 +651,8 @@ export const enStrings: I18nStrings = {
 
   modeAllTitle: "Sync All",
   modeAllDesc: "Scan and download all unsynced files.",
-  modeRecentTitle: "Sync Recent",
-  modeRecentDesc: (count) => `Latest ${count} files (default)`,
+  modeRecentTitle: "Sync New Files",
+  modeRecentDesc: (count) => `Check latest ${count} files; skip synced`,
   cascadeHeader: "Sync Recent / Presets",
   cascadePreset: (count) => `Latest ${count} files`,
   badgeDefault: "Default",

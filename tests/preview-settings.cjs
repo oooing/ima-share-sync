@@ -4,6 +4,9 @@
 const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
+const { createHash } = require('node:crypto');
+const port = Number(process.env.IMA_PREVIEW_PORT || 1432);
+const fixtureHashes = Object.fromEntries(['', '示例知识库', '我的学习资料', '行业观察'].map(name => [name, createHash('sha256').update(name).digest('hex')]));
 
 const routes = new Map([
   ['/', ['settings-fixture.html', 'text/html; charset=utf-8']],
@@ -25,7 +28,7 @@ const server = http.createServer((req, res) => {
   try {
     const file = fs.readFileSync(path.resolve(__dirname, route[0]));
     const body = route[0] === 'settings-fixture.html'
-      ? Buffer.from(file.toString('utf8').replaceAll('__PLUGIN_VERSION__', JSON.parse(fs.readFileSync(path.resolve(__dirname, '../dist/manifest.json'), 'utf8')).version))
+      ? Buffer.from(file.toString('utf8').replaceAll('__PLUGIN_VERSION__', JSON.parse(fs.readFileSync(path.resolve(__dirname, '../dist/manifest.json'), 'utf8')).version).replace('__FIXTURE_SOURCE_HASHES__', JSON.stringify(fixtureHashes)))
       : file;
     res.writeHead(200, {
       'Content-Type': route[1],
@@ -45,7 +48,7 @@ server.on('error', (error) => {
   console.error(`Settings fixture failed: ${error.message}`);
   process.exitCode = 1;
 });
-server.listen(1432, '127.0.0.1', () => {
-  console.log('Settings fixture: http://127.0.0.1:1432 (legacy settings)');
-  console.log('New installation: http://127.0.0.1:1432/?new=1 (no vault or desktop automation)');
+server.listen(port, '127.0.0.1', () => {
+  console.log(`Settings fixture: http://127.0.0.1:${port} (legacy settings)`);
+  console.log(`New installation: http://127.0.0.1:${port}/?new=1 (no vault or desktop automation)`);
 });

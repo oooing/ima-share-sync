@@ -36,11 +36,14 @@ const options = {
     js: "/* Generated from the public TypeScript and PowerShell sources. */\n/*\n" + thirdPartyNotices + "\n*/",
   },
   bundle: true,
+  charset: "utf8",
   entryPoints: ["src/main.ts"],
   external: [
     "obsidian",
     "electron",
     "child_process",
+    "https",
+    "node:timers",
     "crypto",
     "fs",
     "fs/promises",
@@ -61,7 +64,9 @@ const options = {
   platform: "browser",
   sourcemap: production ? false : "inline",
   target: "es2022",
-  plugins: [pdfWorkerPlugin(), embeddedWasmPlugin()],
+  plugins: [{ name: "powershell-line-endings", setup(build) {
+    build.onLoad({ filter: /\.ps1$/ }, async args => ({ contents: (await readFile(args.path, "utf8")).replace(/\r\n/g, "\n"), loader: "text" }));
+  } }, pdfWorkerPlugin(), embeddedWasmPlugin()],
 };
 
 await rm("dist", { recursive: true, force: true });

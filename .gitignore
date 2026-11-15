@@ -16,3 +16,7 @@ Thumbs.db
 *.key
 .obsidian/
 tests/SMOKE*.md
+
+# Web development output (never vault data).
+.web/
+artifacts/

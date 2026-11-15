@@ -24,6 +24,27 @@ function New-Window([string]$Name, [int]$Handle, [int]$Process=321) {
     }
     return $window
 }
+& {
+    Add-Type -AssemblyName UIAutomationClient
+    Add-Type -AssemblyName UIAutomationTypes
+    $actualWindowRoots=${function:Get-ImaWindowRoots}
+    function Get-Process {param($Name,$ErrorAction) if($Name -cne 'ima.copilot'){throw 'unexpected process query'};return @([pscustomobject]@{Id=321})}
+    function Get-ImaNativeWindowHandles {param($ProcessIds) Check '321' ($ProcessIds -join ',') 'native enumeration restricted to IMA PIDs';return @(1,2,3,4)}
+    $script:ResolvedHandles=@()
+    function Get-ImaWindowElement {param($Handle)
+        $script:ResolvedHandles += [int]$Handle
+        if([int]$Handle -eq 4){throw [Windows.Automation.ElementNotAvailableException]::new('destroyed')}
+        if([int]$Handle -eq 3){return New-Window 'not IMA after HWND reuse' 3 999}
+        return New-Window '' ([int]$Handle) 321
+    }
+    $actual=@(& $actualWindowRoots)
+    Check '1,2' (($actual|ForEach-Object{$_.Current.NativeWindowHandle})-join',') 'preserve untitled and hidden IMA windows; reject changed PID and destroyed HWND'
+    Check '1,2,3,4' ($script:ResolvedHandles-join',') 'only filtered handles enter UIA'
+    Check $false ($actualWindowRoots.ToString().Contains('RootElement')) 'reader enumeration never enters other desktop providers'
+    function Get-Process {param($Name,$ErrorAction) return @()}
+    function Get-ImaNativeWindowHandles {throw 'no IMA must not enumerate desktop'}
+    Check 0 @(& $actualWindowRoots).Count 'no IMA returns without native enumeration'
+}
 function Get-ImaRoot { throw 'OFFLINE: desktop access forbidden' }
 function Get-ImaWindowRoots { return @($script:Windows) }
 function Write-SyncLog {}
@@ -176,4 +197,63 @@ Check 0 $script:AppCloseCalls 'top-level cleanup preserves user readers'
 $script:PreserveImaWindows=$false
 Close-ImaApplicationAfterSync
 Check 1 $script:AppCloseCalls 'normal sync retains requested app-close behavior'
+& {
+    Add-Type -AssemblyName UIAutomationClient
+    Add-Type -AssemblyName UIAutomationTypes
+    $shared=New-Window 'Q4report2026.pdf' 88
+    $beforeShared=@{'88'=(Get-ImaOwnedWindowIdentity $shared)}
+    $sourceId='knowledge-pdf_fixture_media_identity'
+    $script:ReaderUrls=@('https://ima.qq.com/file?media_title=Q4report2026.pdf&media_id=pdf_fixture_media_identity')
+    $script:ClosedTabs=0;$script:Closed=@()
+    $invoke=[pscustomobject]@{};$invoke|Add-Member ScriptMethod Invoke {$script:ClosedTabs++}
+    $button=[pscustomobject]@{Pattern=$invoke};$button|Add-Member ScriptMethod TryGetCurrentPattern {param($kind,$output) $output.Value=$this.Pattern;return $true}
+    $tabElement=[pscustomobject]@{Close=$button};$tabElement|Add-Member ScriptMethod FindAll {param($scope,$condition) return @($this.Close)}
+    $newTab=[pscustomobject]@{Id='new-tab';Title='Q4report2026.pdf';Selected=$true;Element=$tabElement}
+    $oldTab=[pscustomobject]@{Id='old-note-tab';Title='Untitled note';Selected=$false;Element=$null}
+    $script:ReaderTabs=@($oldTab,$newTab)
+    function Get-ImaReaderTabs {param($Window) return $script:ReaderTabs}
+    $oldTabs=@{'88'=@('old-note-tab')}
+    $claimed=Select-ImaOwnedOriginalWindow @($shared) $beforeShared 'Q4report2026.pdf' $oldTabs $sourceId
+    Check 'new-tab' $claimed.TabId 'same native window may host a verified new selected file tab'
+    Check $true (Test-ImaOwnedWindow $claimed) 'tab ownership also verifies current media ID'
+    Check $null (Select-ImaOwnedOriginalWindow @($shared) $beforeShared 'Q4report2026.pdf' @{'88'=@('old-note-tab','new-tab')} $sourceId) 'preexisting same title and media tab cannot be claimed'
+    $newTab.Selected=$false
+    Check $null (Select-ImaOwnedOriginalWindow @($shared) $beforeShared 'Q4report2026.pdf' $oldTabs $sourceId) 'background tab cannot be claimed'
+    Check $false (Test-ImaOwnedWindow $claimed) 'switching away invalidates existing tab claim'
+    Close-ImaOwnedOriginalWindow $claimed
+    Check 0 $script:ClosedTabs 'inactive owned tab is not touched'
+    $newTab.Selected=$true
+    $script:ReaderUrls=@('https://ima.qq.com/file?media_title=Q4report2026.pdf&media_id=pdf_different_identity')
+    Check $null (Select-ImaOwnedOriginalWindow @($shared) $beforeShared 'Q4report2026.pdf' $oldTabs $sourceId) 'matching title with wrong source ID is refused'
+    Check $false (Test-ImaOwnedWindow $claimed) 'media ID change invalidates owned tab'
+    $script:ReaderUrls=@('https://ima.qq.com/file?media_title=Q4report2026.pdf&media_id=pdf_fixture_media_identity')
+    $script:ReaderTabs+= [pscustomobject]@{Id='another-new-tab';Title='Q4report2026.pdf';Selected=$false;Element=$null}
+    Check-Throws {Select-ImaOwnedOriginalWindow @($shared) $beforeShared 'Q4report2026.pdf' $oldTabs $sourceId} 'multiple new matching tabs are ambiguous'
+    $script:ReaderTabs=@($oldTab,$newTab)
+    Close-ImaOwnedOriginalWindow $claimed
+    Check 1 $script:ClosedTabs 'cleanup invokes only the owned tab close button'
+    Check 0 $script:Closed.Count 'cleanup keeps preexisting note and native window'
+    Check $true $script:PreserveImaWindows 'reused window is preserved by top-level cleanup'
+    $existing=Select-ImaOwnedOriginalWindow @($shared) $beforeShared 'Q4report2026.pdf' @{'88'=@('old-note-tab','new-tab')} $sourceId -AllowExisting
+    Check $true $existing.KeepOpen 'verified preexisting selected media may be used but is never owned for cleanup'
+    Close-ImaOwnedOriginalWindow $existing
+    Check 1 $script:ClosedTabs 'existing verified tab remains open'
+    $newTab.Selected=$false
+    Check $null (Select-ImaOwnedOriginalWindow @($shared) $beforeShared 'Q4report2026.pdf' @{'88'=@('old-note-tab','new-tab')} $sourceId -AllowExisting) 'existing background tab cannot be read before selection'
+    $newTab.Selected=$true
+    Check $true (Select-ImaOwnedOriginalWindow @($shared) $beforeShared 'Q4report2026.pdf' @{'88'=@('old-note-tab','new-tab')} $sourceId -AllowExisting).KeepOpen 'existing tab selected by exact-card open is reusable without closure'
+    Reset-TestState
+    $script:Windows=@($shared);$script:ReaderUrls=@('https://ima.qq.com/file?media_title=Q4report2026.pdf&media_id=pdf_fixture_media_identity')
+    $reuseRecord=[pscustomobject]@{Name='Q4report2026.pdf';Kind='pdf';SourceId=$sourceId}
+    [void](Save-ImaOriginalFile $reuseRecord)
+    Check 1 $script:Downloads 'same-source existing selected reader downloads once'
+    Check 0 $script:OpenCalls 'existing verified reader needs no repeated card open'
+    Check 0 $script:Closed.Count 'reuse never closes existing native window'
+    Check 1 $script:ClosedTabs 'reuse never closes existing file or note tab'
+}
+Reset-TestState
+$script:Windows=@($main,$reader)
+Check-Throws {Save-ImaOriginalFile $record} 'existing matching file reader is preserved, not auto-closed'
+Check 0 $script:Closed.Count 'same-title preflight closes no existing window'
+Check 0 $script:OpenCalls 'same-title preflight opens no new tab'
 Write-Output "$script:Checks original-file safety checks passed (offline, no desktop/network/cache access)."

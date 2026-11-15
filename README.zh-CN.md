@@ -10,11 +10,11 @@
 
 <p><a href="https://obsidian.md/plugins?id=ima-speed-sync"><strong>社区页面 →</strong></a></p>
 
-<p><a href="https://github.com/oooing/ima-share-sync/blob/main/docs/GUIDE.zh-CN.md">手动安装</a> · <a href="https://github.com/oooing/ima-share-sync/releases/tag/0.3.6">下载文件</a></p>
+<p><a href="https://github.com/oooing/ima-share-sync/blob/main/docs/GUIDE.zh-CN.md">手动安装</a> · <a href="https://github.com/oooing/ima-share-sync/releases/tag/0.3.19">下载文件</a></p>
 
 <p><sub>Windows 10+ · Obsidian 1.11.4+ · 已安装并登录 IMA 电脑版</sub></p>
 
-<p>0.3.6 已发布。可通过社区插件页面安装，也可按指南手动安装。</p>
+<p>0.3.19 已发布。可通过社区插件页面安装，也可按指南手动安装。</p>
 
 <p><a href="#适合谁用">适合谁用</a> · <a href="#能做什么">能做什么</a></p>
 
@@ -155,5 +155,7 @@
 ### 开始收藏
 
 把下一份好资料，留在自己的电脑里。
+
+**桌面权限：** 插件使用 PowerShell 和本地文件访问来操作 IMA、保存文件；启用前台操作时可能出现 IMA 窗口。这些必要能力可能仍会被市场标注为审查提示。只保存你有权复制或下载的资料。
 
 **[社区页面 →](https://obsidian.md/plugins?id=ima-speed-sync)** · [手动安装](https://github.com/oooing/ima-share-sync/blob/main/docs/GUIDE.zh-CN.md)
