@@ -8,6 +8,7 @@ export interface PickerOptions {
   browse?: boolean;
   rename?: boolean;
   preserveIdentity?: boolean;
+  editablePath?: boolean;
   load: (parent: string[]) => Promise<PickerList>;
   choose: (path: string[], rename: boolean) => void;
   cancel?: () => void;
@@ -41,7 +42,7 @@ export class ScopePicker extends Modal {
     this.render();
     try {
       this.list = await this.options.load([...parent]); this.message = "";
-      if (this.selected.length && JSON.stringify(this.selected.slice(0, -1)) === JSON.stringify(parent) &&
+      if (!this.options.editablePath && this.selected.length && JSON.stringify(this.selected.slice(0, -1)) === JSON.stringify(parent) &&
         !this.list.names.includes(this.selected[this.selected.length - 1]!)) this.selected = [];
     }
     catch (error) { this.message = error instanceof Error ? error.message : String(error); }
@@ -74,6 +75,14 @@ export class ScopePicker extends Modal {
     this.results = this.contentEl.createDiv({ cls: "ima-picker-results", attr: { role: "group", "aria-label": "可选目录" } });
     if (this.list?.complete === false) new Setting(this.contentEl).setName("完整知识库名称").addText(text => text
       .setPlaceholder("与 IMA 中的名称一致").onChange(value => { this.selected = value.trim() ? [value.trim()] : []; this.renderResults(); }));
+    if (this.options.editablePath) {
+      const label = this.contentEl.createEl("label", { cls: "ima-picker-path-field", text: "保存路径" });
+      const input = label.createEl("textarea", { attr: { rows: "2", "aria-label": "保存路径" } });
+      input.value = this.selected[0] ?? ""; input.disabled = this.busy || !this.list;
+      input.addEventListener("input", () => {
+        this.selected = input.value.trim() ? [input.value.trim()] : []; this.renderResults();
+      });
+    }
     if (this.options.rename) new Setting(this.contentEl).setName("这是原来源改名")
       .setDesc("确认后沿用原同步记录。更换其他来源时请关闭。")
       .addToggle(toggle => toggle.setValue(this.preserve).onChange(value => { this.preserve = value; }));
@@ -100,7 +109,12 @@ export class ScopePicker extends Modal {
       const icon = pick.createSpan(); setIcon(icon, this.options.browse ? "folder" : "book-open");
       pick.createSpan({ text: label });
       if (same(path)) { const check = pick.createSpan(); setIcon(check, "check"); }
-      pick.addEventListener("click", () => { this.selected = path; this.renderResults(); });
+      pick.addEventListener("click", () => {
+        this.selected = path;
+        const input = this.contentEl.querySelector<HTMLTextAreaElement>(".ima-picker-path-field textarea");
+        if (input) input.value = path[0] ?? "";
+        this.renderResults();
+      });
       if (enter) {
         const open = row.createEl("button", { attr: { "aria-label": `打开 ${label}` } }); setIcon(open, "chevron-right");
         open.addEventListener("click", () => { this.selected = []; void this.read(path); });

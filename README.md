@@ -10,11 +10,11 @@
 
 <p><a href="https://obsidian.md/plugins?id=ima-speed-sync"><strong>Community listing →</strong></a></p>
 
-<p><a href="https://github.com/oooing/ima-share-sync/blob/main/docs/GUIDE.md">Manual setup</a> · <a href="https://github.com/oooing/ima-share-sync/releases/tag/0.3.19">Download files</a></p>
+<p><a href="https://github.com/oooing/ima-share-sync/blob/main/docs/GUIDE.md">Manual setup</a> · <a href="https://github.com/oooing/ima-share-sync/releases/latest">Download files</a></p>
 
 <p><sub>Windows 10+ · Obsidian 1.11.4+ · Installed and signed-in IMA desktop</sub></p>
 
-<p>Version 0.3.19 is released. Install from the Community listing, or follow the guide for manual installation.</p>
+<p>Install from the Community listing, or follow the guide for manual installation.</p>
 
 <p><a href="#who-it-helps">Who it helps</a> · <a href="#what-it-does">What it does</a></p>
 
@@ -117,7 +117,7 @@ Keep the original folder names. Include subfolders and limit how many folders an
 <summary><strong>Organize notes</strong> · 5 features</summary>
 
 **Make notes**  
-Turn existing PDF text into notes, with optional links to the original. Scans get a notice; text inside images is not read.
+PDF text extraction runs locally and is on by default. **Image OCR is off by default.** For scans, two offline modes use a runtime you install separately outside Obsidian. The recommended cloud mode sends the entire PDF to Baidu AI Studio only after you add your own [access token](https://aistudio.baidu.com/account/accessToken) and confirm that batch. Automatic sync never uploads PDFs for OCR. Baidu's free quota is currently up to 20,000 pages per user, per model, per day ([official quota](https://ai.baidu.com/ai-doc/AISTUDIO/Xmjclapam)). [Setup and privacy](docs/OCR.md)
 
 **Fill missing notes**  
 Add missing notes for PDFs you have already saved, without downloading the files again.

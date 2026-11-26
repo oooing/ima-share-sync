@@ -200,6 +200,8 @@
         callback(control); return this;
       }
       addDropdown(callback) {
+        // Keep native select behavior in this isolated settings host.
+        // Select component used by the actual plugin.
         const select = this.bind(this.controlEl.createEl('select'));
         const control = {
           selectEl: select,
@@ -217,6 +219,15 @@
           setValue(value) { input.checked = value; return this; },
           setDisabled(value) { input.disabled = value; return this; },
           onChange(handler) { input.addEventListener('change', () => invoke(handler, input.checked)); return this; },
+        };
+        callback(control); return this;
+      }
+      addTextArea(callback) {
+        const input = this.bind(this.controlEl.createEl('textarea'));
+        const control = {
+          inputEl: input,
+          setValue(value) { input.value = value; return this; },
+          onChange(handler) { input.addEventListener('input', () => invoke(handler, input.value)); return this; },
         };
         callback(control); return this;
       }
@@ -318,6 +329,7 @@
       },
     };
     window.module = { exports: {} };
+    window.process = { env: { LOCALAPPDATA: 'C:\\Fixture\\AppData\\Local' }, versions: {} };
     window.require = (name) => {
       if (name === 'worker_threads') return { Worker: class { constructor() { throw new Error('PDF workers are disabled in this settings-only fixture.'); } } };
       if (name === 'obsidian') return obsidian;
@@ -331,11 +343,13 @@
           typeof value === 'string' ? new TextEncoder().encode(value) : Uint8Array.from(value);
       } } };
       // PDF workers remain blocked; this settings-only host does not load WASM.
-      if (name === 'zlib') return { gunzipSync: () => new Uint8Array(0) };
+      if (name === 'zlib') return { gunzipSync: () => new Uint8Array(0), brotliDecompressSync: () => new Uint8Array(0) };
+      if (name === 'https') return { request: blocked('https.request') };
+      if (name === 'node:timers') return { setTimeout, clearTimeout };
       if (name === 'fs' || name === 'electron') return new Proxy({}, { get: (_target, key) => blocked(`${name}.${String(key)}`) });
       if (name === 'fs/promises') return Object.fromEntries(['lstat', 'mkdir', 'mkdtemp', 'readFile', 'realpath', 'rm', 'writeFile', 'rename'].map((key) => [key, blocked(`fs.${key}`)]));
-      if (name === 'os') return { tmpdir: blocked('os.tmpdir') };
-      if (name === 'path') return { join: blocked('path.join'), resolve: blocked('path.resolve') };
+      if (name === 'os') return { tmpdir: blocked('os.tmpdir'), homedir: () => 'C:\\Fixture' };
+      if (name === 'path') return { join: (...parts) => parts.join('\\'), resolve: blocked('path.resolve') };
       throw new Error(`Unmocked fixture module: ${name}`);
     };
   </script>

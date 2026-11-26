@@ -221,11 +221,6 @@ export interface I18nStrings {
   // 文档转换 (Markdown)
   enableMarkdownName: string;
   enableMarkdownDesc: string;
-  markdownScopeName: string;
-  markdownScopeDesc: string;
-  markdownScopeAll: string;
-  markdownScopeText: string;
-  markdownScopeImage: string;
   embedPdfLinkName: string;
   embedPdfLinkDesc: string;
   manualScanName: string;
@@ -234,14 +229,17 @@ export interface I18nStrings {
   mdStatusHeading: string;
   mdStatusIdle: string;
   mdStatusConverting: string;
-  mdStatusCompleted: string;
+  mdStatusCompleted: (failed: number, deferred: number) => string;
+  mdStatusCanceled: string;
+  mdStatusFailed: string;
   mdKpiConverted: string;
   mdKpiSkipped: string;
   mdKpiFailed: string;
   mdLastConverted: (time: string) => string;
   mdNeverConverted: string;
   mdProgressText: (cur: number, total: number, pct: number) => string;
-  mdBtnConverting: string;
+  mdProcessPending: (count: number) => string;
+  mdStopConversion: string;
 
   // 命令与提示 (Commands & UI)
   ribbonTooltip: string;
@@ -467,29 +465,28 @@ export const zhStrings: I18nStrings = {
   saveSettingsError: "提醒设置未能保存，重启后可能恢复原设置。请检查仓库写入权限。",
 
   // 文档转换 (Markdown)
-  enableMarkdownName: "转为 MD",
-  enableMarkdownDesc: "下载 PDF 后自动生成排版 MD。",
-  markdownScopeName: "转换范围",
-  markdownScopeDesc: "选择要转换格式的 PDF 类型。",
-  markdownScopeAll: "全部文件",
-  markdownScopeText: "仅文字版",
-  markdownScopeImage: "仅图片版",
+  enableMarkdownName: "PDF 文字转 Markdown",
+  enableMarkdownDesc: "默认开启。本地提取文字型 PDF，不用 API；扫描页另用图片 OCR。",
   embedPdfLinkName: "插入双链",
   embedPdfLinkDesc: "在 MD 正文顶部关联原 PDF 链接。",
-  manualScanName: "手动补全",
-  manualScanDesc: "扫描当前文件夹并补齐遗漏 MD。",
-  manualScanBtn: "立即补全",
-  mdBtnConverting: "正在转换中…",
+  manualScanName: "检查已有 PDF",
+  manualScanDesc: "补齐文字笔记，并发现待 OCR 文件，不会上传。",
+  manualScanBtn: "检查文件",
+  mdProcessPending: count => count ? `补转 ${count} 份` : "补转待处理",
+  mdStopConversion: "停止转换",
   mdStatusHeading: "转换看板",
   mdStatusIdle: "就绪",
   mdStatusConverting: "正在转换",
-  mdStatusCompleted: "转换完成",
+  mdStatusCompleted: (failed, deferred) => failed ? `已结束 · ${failed} 项失败`
+    : deferred ? `已结束 · ${deferred} 项待转换` : "转换完成",
+  mdStatusCanceled: "已取消",
+  mdStatusFailed: "转换失败",
   mdKpiConverted: "已生成",
   mdKpiSkipped: "已跳过",
   mdKpiFailed: "失败项",
   mdLastConverted: (time) => `上次转换：${time}`,
   mdNeverConverted: "尚未开始转换",
-  mdProgressText: (cur, total, pct) => `正在转换 (${cur}/${total}) · ${pct}%`,
+  mdProgressText: (cur, total, pct) => `已处理 ${cur}/${total} · ${pct}%`,
 
   // 命令与提示 (Commands & UI)
   ribbonTooltip: "打开 IMA Share Sync",
@@ -715,29 +712,28 @@ export const enStrings: I18nStrings = {
   saveSettingsError: "Failed to save notice preferences. Please check write permissions.",
 
   // Document Conversion
-  enableMarkdownName: "Convert to MD",
-  enableMarkdownDesc: "Automatically convert PDF to Markdown note.",
-  markdownScopeName: "Convert Scope",
-  markdownScopeDesc: "Select PDF types to convert.",
-  markdownScopeAll: "All files",
-  markdownScopeText: "Text only",
-  markdownScopeImage: "Images only",
+  enableMarkdownName: "PDF text to Markdown",
+  enableMarkdownDesc: "On by default. Extract embedded text locally without an API. Scanned pages need image OCR.",
   embedPdfLinkName: "Embed Link",
   embedPdfLinkDesc: "Embed original PDF link at the top of note.",
-  manualScanName: "Manual Fill",
-  manualScanDesc: "Scan folder and generate missing Markdown notes.",
-  manualScanBtn: "Fill Now",
-  mdBtnConverting: "Converting...",
+  manualScanName: "Check saved PDFs",
+  manualScanDesc: "Fill missing text notes and discover PDFs needing OCR. No uploads.",
+  manualScanBtn: "Check files",
+  mdProcessPending: count => count ? `Process ${count} pending` : "Process pending",
+  mdStopConversion: "Stop conversion",
   mdStatusHeading: "Conversion Dashboard",
   mdStatusIdle: "Ready",
   mdStatusConverting: "Converting",
-  mdStatusCompleted: "Completed",
+  mdStatusCompleted: (failed, deferred) => failed ? `Finished · ${failed} failed`
+    : deferred ? `Finished · ${deferred} pending` : "Completed",
+  mdStatusCanceled: "Canceled",
+  mdStatusFailed: "Conversion failed",
   mdKpiConverted: "Converted",
   mdKpiSkipped: "Skipped",
   mdKpiFailed: "Failed",
   mdLastConverted: (time) => `Last converted: ${time}`,
   mdNeverConverted: "No conversions yet",
-  mdProgressText: (cur, total, pct) => `Converting (${cur}/${total}) · ${pct}%`,
+  mdProgressText: (cur, total, pct) => `${cur}/${total} processed · ${pct}%`,
 
   // Commands & Notices
   ribbonTooltip: "Open IMA Share Sync",

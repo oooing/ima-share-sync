@@ -15,15 +15,17 @@ export interface ConvertResultSummary {
   completed: number;
   skipped: number;
   failed: number;
+  deferred?: number;
 }
 
 export interface SinglePdfResult {
   success: boolean;
   skipped: boolean;
   error?: string;
+  deferred?: boolean;
 }
 
-export type SinglePdfProcessor = (task: ConvertTask) => SinglePdfResult;
+export type SinglePdfProcessor = (task: ConvertTask) => SinglePdfResult | Promise<SinglePdfResult>;
 
 const scheduleParserTimeout = setTimeout;
 const clearParserTimeout = clearTimeout;
@@ -70,6 +72,7 @@ export async function runDirectConversion(
   let completed = 0;
   let skipped = 0;
   let failed = 0;
+  let deferred = 0;
 
   for (let index = 0; index < tasks.length; index++) {
     if (signal?.aborted) throw new Error("Markdown 转换已被取消");
@@ -77,8 +80,11 @@ export async function runDirectConversion(
     if (!task) continue;
 
     try {
-      const result = processor(task);
-      if (result.skipped) {
+      const result = await processor(task);
+      if (signal?.aborted) throw new Error("Markdown 转换已被取消");
+      if (result.deferred) {
+        deferred++;
+      } else if (result.skipped) {
         skipped++;
       } else if (result.success) {
         completed++;
@@ -87,6 +93,7 @@ export async function runDirectConversion(
         console.warn("Markdown 转换失败:", task.title, result.error);
       }
     } catch (error) {
+      if (signal?.aborted) throw new Error("Markdown 转换已被取消");
       failed++;
       console.warn("Markdown 转换执行异常:", task.title, error);
     }
@@ -95,12 +102,12 @@ export async function runDirectConversion(
     await yieldEventLoop();
   }
 
-  return { completed, skipped, failed };
+  return { completed, skipped, failed, ...(deferred ? { deferred } : {}) };
 }
 
 /**
  * 转换任务调度入口：
- * - 在 Obsidian / Electron 渲染进程中：安全走 Direct 模式，零子进程/零 eval，杜绝进程挂死与安全告警；
+ * - 在 Obsidian 中由 Direct processor 调度；文字解析本地运行，OCR 可异步调用独立进程或经确认的 API；
  * - 在独立 Node 测试环境中：使用 worker_threads 隔离执行 runnerSource，完整保留并发与超时保障。
  */
 export async function runMarkdownConversion(

@@ -13,6 +13,11 @@ function ensureInspector(): void {
   inspectorLoaded = true;
 }
 
+export function inspectPdf(bytes: Uint8Array, pages?: number[]) {
+  ensureInspector();
+  return processPdf(bytes, pages ? { pages } : undefined);
+}
+
 /**
  * 转换单个 PDF 文件的核心业务逻辑。
  * 零 eval / 零 new Function / 零外部子进程，直接在当前 Node/Electron 环境运行。

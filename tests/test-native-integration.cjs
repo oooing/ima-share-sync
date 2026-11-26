@@ -10,7 +10,7 @@ const {EventEmitter}=require('node:events');
 const clone=value=>JSON.parse(JSON.stringify(value));
 let spawnHandler;
 class Element { constructor(){this.children=[];} createDiv(){const x=new Element();this.children.push(x);return x;} createEl(){return this.createDiv();} createSpan(){return this.createDiv();} addClass(){} addEventListener(){} setText(){} empty(){} }
-class FileSystemAdapter {getBasePath(){return 'D:\\IsolatedTestVault';}}
+class FileSystemAdapter {getBasePath(){return 'D:\\IsolatedTestVault';} async exists(){return false;}}
 class TFile {}
 class TFolder {constructor(){this.children=[];}}
 class Base {}
@@ -19,7 +19,7 @@ class Plugin {
  async saveData(value){this.saveCalls++;this.savedData=clone(value);}
 }
 const obsidian={Plugin,PluginSettingTab:Base,ItemView:Base,Modal:Base,Menu:Base,Notice:class{},Setting:Base,WorkspaceLeaf:Base,TFile,TFolder,FileSystemAdapter,Platform:{isWin:true},normalizePath:x=>x.replace(/\\/g,'/'),setIcon(){},addIcon(){},getLanguage:()=> 'zh'};
-const bundle=buildSync({entryPoints:['src/main.ts'],bundle:true,platform:'node',format:'cjs',write:false,loader:{'.ps1':'text'},external:['obsidian','ima-pdf-worker','ima-inspector-wasm','@firecrawl/pdf-inspector-wasm']}).outputFiles[0].text;
+const bundle=buildSync({entryPoints:['src/main.ts'],bundle:true,platform:'node',format:'cjs',write:false,loader:{'.ps1':'text','.py':'text'},external:['obsidian','ima-pdf-worker','ima-inspector-wasm','@firecrawl/pdf-inspector-wasm']}).outputFiles[0].text;
 const moduleObject={exports:{}};
 new Function('require','module','exports',bundle)(name=>{
  if(name==='obsidian')return obsidian;
@@ -231,6 +231,44 @@ function prepareExtractedSync(result){
  plugin.app.vault.getAbstractFileByPath=()=>new TFile();
  return {plugin,saved,requests};
 }
+
+test('sync recovers only selected missing Markdown PDFs locally without redownloading or touching notes',async()=>{
+ const result={items:[],errors:[],skippedTitles:['旧研报'],skippedSourceIds:['knowledge-pdf_existing']};
+ const {plugin,saved,requests}=prepareExtractedSync(result);
+ plugin.settings.enableMarkdownConversion=true;
+ plugin.settings.markdownConversionScope='all';
+ const entry=plugin.syncedAttachments[0];
+ const pdf=Object.assign(new TFile(),{path:entry.path,extension:'pdf',basename:'旧研报'});
+ let noteExists=false,converted=[];
+ plugin.app.vault.getAbstractFileByPath=p=>p===pdf.path?pdf:null;
+ plugin.app.vault.adapter.exists=async()=>noteExists;
+ plugin.convertPdfFilesToMarkdown=async files=>{converted.push(...files);noteExists=true;return {completed:files.length,skipped:0,failed:0};};
+ plugin.syncedAttachments.push({...entry,sourceId:'unselected',path:'研究/原月/未选中.pdf'});
+ await plugin.sync(true);
+ assert.equal(plugin.lastReport.status,'success');
+ assert.deepEqual(saved,[]);
+ assert.deepEqual(converted,[{path:entry.path,title:'旧研报'}]);
+ assert.match(plugin.lastReport.summary,/生成 Markdown 1 篇/);
+ assert.equal(requests.length,1);assert.ok(requests[0].skipIds.includes(entry.sourceId));
+ converted=[];await plugin.sync(true);assert.deepEqual(converted,[],'existing Markdown is not reprocessed');
+ noteExists=false;result.canceled=true;await plugin.sync(true);assert.deepEqual(converted,[],'canceled sync never begins OCR');
+ delete result.canceled;plugin.settings.enableMarkdownConversion=false;
+ await plugin.sync(true);assert.deepEqual(converted,[],'disabled conversion is respected');
+});
+
+test('local recovery respects source identity, destination, file kind and existing Markdown',async()=>{
+ const plugin=fixture(true),scope='a'.repeat(64);
+ const names=['eligible','has-note','disk-note','outside','wrong-source','image','missing'];
+ plugin.syncedAttachments=names.map(name=>({sourceId:name,sourceScope:name==='wrong-source'?'other':scope,path:name==='outside'?'研究/原月-other/report.pdf':`研究/原月/${name}.${name==='image'?'png':'pdf'}`}));
+ plugin.syncedAttachments.push({...plugin.syncedAttachments[0]});
+ const files=new Map(plugin.syncedAttachments.filter(x=>x.sourceId!=='missing').map(x=>[x.path,Object.assign(new TFile(),{path:x.path,extension:x.path.endsWith('png')?'png':'pdf',basename:x.sourceId})]));
+ files.set('研究/原月/has-note.md',new TFile());
+ plugin.app.vault.getAbstractFileByPath=p=>files.get(p)||null;
+ plugin.app.vault.adapter.exists=async p=>p==='研究/原月/disk-note.md';
+ assert.deepEqual(await plugin.findMissingMarkdownPdfs(names,plugin.settings),[{path:'研究/原月/eligible.pdf',title:'eligible'}]);
+ assert.deepEqual(await plugin.findMissingMarkdownPdfs([],plugin.settings),[]);
+ assert.equal(plugin.isExtractionResult({items:[],skippedSourceIds:[null]}),false);
+});
 
 test('native articles with absent or inconsistent directory IDs fail before any vault import or mapping update',async()=>{
  for(const malformed of [

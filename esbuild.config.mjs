@@ -57,6 +57,7 @@ const options = {
   legalComments: "none",
   loader: {
     ".ps1": "text",
+    ".py": "text",
   },
   logLevel: "info",
   minify: production,
@@ -64,8 +65,8 @@ const options = {
   platform: "browser",
   sourcemap: production ? false : "inline",
   target: "es2022",
-  plugins: [{ name: "powershell-line-endings", setup(build) {
-    build.onLoad({ filter: /\.ps1$/ }, async args => ({ contents: (await readFile(args.path, "utf8")).replace(/\r\n/g, "\n"), loader: "text" }));
+  plugins: [{ name: "embedded-script-line-endings", setup(build) {
+    build.onLoad({ filter: /\.(ps1|py)$/ }, async args => ({ contents: (await readFile(args.path, "utf8")).replace(/\r\n/g, "\n"), loader: "text" }));
   } }, pdfWorkerPlugin(), embeddedWasmPlugin()],
 };
 

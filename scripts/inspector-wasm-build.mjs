@@ -1,6 +1,6 @@
 import { createRequire } from "node:module";
 import { readFile } from "node:fs/promises";
-import { gzipSync } from "node:zlib";
+import { gzipSync, brotliCompressSync, constants } from "node:zlib";
 
 // gzip's OS byte differs between Windows (10) and Unix (3). Normalize it
 // to RFC 1952's "unknown" value so release rebuilds are byte-identical.
@@ -8,6 +8,10 @@ export function compressWasm(bytes) {
   const compressed = gzipSync(bytes, { level: 9 });
   compressed[9] = 255;
   return compressed;
+}
+
+export function compressWasmForBundle(bytes) {
+  return brotliCompressSync(bytes, { params: { [constants.BROTLI_PARAM_QUALITY]: 11 } });
 }
 
 // Compress binary data only, never JavaScript. The parser remains bundled and
@@ -20,9 +24,9 @@ export function embeddedWasmPlugin() {
     setup(build) {
       build.onResolve({ filter: /^ima-inspector-wasm$/ }, () => ({ path: wasm, namespace: "inspector-wasm" }));
       build.onLoad({ filter: /.*/, namespace: "inspector-wasm" }, async () => {
-        const compressed = compressWasm(await readFile(wasm)).toString("base64");
+        const compressed = compressWasmForBundle(await readFile(wasm)).toString("base64");
         return {
-          contents: `import { gunzipSync } from "zlib"; import { Buffer } from "buffer"; export default gunzipSync(Buffer.from(${JSON.stringify(compressed)}, "base64"));`,
+          contents: `import { brotliDecompressSync } from "zlib"; import { Buffer } from "buffer"; export default brotliDecompressSync(Buffer.from(${JSON.stringify(compressed)}, "base64"));`,
           loader: "js",
           watchFiles: [wasm],
         };

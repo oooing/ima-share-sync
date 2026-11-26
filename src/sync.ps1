@@ -6818,12 +6818,14 @@ function Invoke-ImaGeneralSync([Windows.Automation.AutomationElement]$Root) {
 
     # 快速内存预检：分离已存在跳过项与真正待同步新增项
     $pendingSync = New-Object Collections.Generic.List[object]
+    $skippedSourceIds = New-Object Collections.Generic.List[string]
     foreach ($record in $records) {
         try {
             Test-ImaCancellation
             if ($record.SourceId -and $script:SkipSourceIds.ContainsKey($record.SourceId)) {
                 [void]$script:SourceRemainingRecords.Remove($record)
                 $script:CompletedSkippedTitles.Add($record.Name)
+                $skippedSourceIds.Add([string]$record.SourceId)
                 Write-SyncLog "$($record.Name) 来源 ID 已同步，打开前跳过"
                 continue
             }
@@ -6904,6 +6906,7 @@ function Invoke-ImaGeneralSync([Windows.Automation.AutomationElement]$Root) {
         sourcePendingRecords = @($pendingState.Records); sourcePendingUnresumableCount = $pendingState.UnresumableCount
         items = @($script:CompletedItems.ToArray()); errors = @($script:CompletedErrors.ToArray())
         skippedTitles = @($script:CompletedSkippedTitles.ToArray())
+        skippedSourceIds = @($skippedSourceIds.ToArray())
         sourceFolderObservations = @($script:SourceFolderObservations)
     }
 }

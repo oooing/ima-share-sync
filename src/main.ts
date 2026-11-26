@@ -27,8 +27,11 @@ import { DesktopOperationCard } from "./desktop-card";
 import { IMA_SHARE_SYNC_ICON_ID, IMA_SHARE_SYNC_ICON_SVG } from "./icon";
 import { validatePdfStructure } from "./pdf-validation";
 import { runMarkdownConversion, type ConvertTask, type ConvertResultSummary } from "./pdf-to-markdown";
-import { processSinglePdf } from "./pdf-markdown-core";
-import { getStrings } from "./i18n";
+import { isOcrProvider, processPdfWithOcr, type LocalOcrMode, type OcrProvider } from "./pdf-ocr-core";
+import { OcrAccountError, OcrJobError, recognizeApi, type OcrJobFailure } from "./ocr-api";
+import { confirmOcr, renderOcrSettings } from "./ocr-settings";
+import { checkOcrRuntime, defaultOcrRuntime, LocalOcrMemoryError, LocalOcrSetupError, recognizeLocal } from "./ocr-local";
+import { getAppLanguage, getStrings } from "./i18n";
 import { calculateDashboardStats, localDateKey, restoreMetrics, type SyncMetrics } from "./dashboard-stats";
 import { createSourceBinding, restoreSourceBinding, rebindSource, isSourceInspection, isSourceNeedsRebind,
   restorePendingSourceResume, isSourcePendingRecords,
@@ -83,8 +86,12 @@ interface ImaSpeedSyncSettings {
   showOperationBefore: boolean;
   showOperationAfter: boolean;
   enableMarkdownConversion: boolean;
-  markdownConversionScope: "all" | "text_only" | "image_only";
+  imageOcrEnabled: boolean;
   embedPdfLinkInMarkdown: boolean;
+  ocrProvider: OcrProvider;
+  ocrRuntimePath: string;
+  ocrMobileRuntimePath: string;
+  ocrSecretId: string;
   language?: "auto" | "zh" | "en";
 }
 
@@ -101,20 +108,62 @@ interface SyncReport {
   errors: ExtractionError[];
   destination?: string;
   metrics?: SyncMetrics;
+  kind?: "markdown";
+  conversion?: MarkdownConversionMetrics;
+}
+
+interface MarkdownConversionMetrics {
+  durationMs: number;
+  uploadedFiles: number;
+  uploadedBytes: number;
+  unconfirmedFiles: number;
+  unconfirmedPdfBytes: number;
 }
 
 export interface MarkdownDashboardState {
-  status: "idle" | "converting" | "completed";
+  status: "idle" | "converting" | "completed" | "canceled" | "failed";
   total: number;
   current: number;
   currentTitle?: string;
   completed: number;
   skipped: number;
   failed: number;
+  deferred?: number;
   lastFinishedAt?: number;
 }
 
 const SYNC_REPORTS_PER_PAGE = 20;
+
+function isPendingPdfPath(value: unknown): value is string {
+  return typeof value === "string" && /\.pdf$/i.test(value) &&
+    !/[:\\\0]/.test(value) && value.split("/").every(part => part && part !== "." && part !== "..");
+}
+
+function restoreConversionMetrics(value: unknown): MarkdownConversionMetrics | undefined {
+  if (!value || typeof value !== "object") return;
+  const fields = [
+    "durationMs", "uploadedFiles", "uploadedBytes", "unconfirmedFiles", "unconfirmedPdfBytes",
+  ] as const;
+  const candidate = value as Record<string, unknown>;
+  const restored = {} as MarkdownConversionMetrics;
+  for (const field of fields) {
+    const amount = candidate[field];
+    if (typeof amount !== "number" || !Number.isSafeInteger(amount) || amount < 0) return;
+    restored[field] = amount;
+  }
+  return restored;
+}
+
+function formatConversionMetrics(metrics: MarkdownConversionMetrics): string {
+  const seconds = Math.floor(metrics.durationMs / 1000);
+  const duration = seconds >= 60 ? `${Math.floor(seconds / 60)} 分 ${seconds % 60} 秒`
+    : seconds ? `${seconds} 秒` : "不足 1 秒";
+  const pdfSize = (bytes: number) => bytes >= 1_000_000 || bytes === 0
+    ? `${(bytes / 1_000_000).toFixed(2)} MB` : `${(bytes / 1_000).toFixed(2)} KB`;
+  const unconfirmed = metrics.unconfirmedFiles
+    ? ` · 未确认受理 ${metrics.unconfirmedFiles} 份（原文件 ${pdfSize(metrics.unconfirmedPdfBytes)}）` : "";
+  return `转换耗时 ${duration} · 已上传 ${metrics.uploadedFiles} 份（${pdfSize(metrics.uploadedBytes)}）${unconfirmed}`;
+}
 
 function restoreSyncReports(value: unknown): SyncReport[] {
   if (!Array.isArray(value)) return [];
@@ -126,11 +175,19 @@ function restoreSyncReports(value: unknown): SyncReport[] {
       typeof report.interactive !== "boolean" || typeof report.summary !== "string" ||
       !["success", "failed", "canceled"].includes(report.status ?? "") || !Array.isArray(report.errors)) continue;
     const errors: ExtractionError[] = [];
-    for (const entry of report.errors.slice(0, 60)) {
+    for (const entry of report.errors) {
       if (entry && typeof entry.title === "string" && typeof entry.message === "string") {
-        errors.push({ title: entry.title.slice(0, 200), message: entry.message.slice(0, 600) });
+        const ocr = entry.ocr;
+        const jobId = typeof ocr?.jobId === "string" && /^[a-z0-9_-]{1,128}$/i.test(ocr.jobId) ? ocr.jobId : "";
+        const reason = typeof ocr?.reason === "string" ? ocr.reason.trim().slice(0, 600) : undefined;
+        errors.push({
+          title: entry.title.slice(0, 200),
+          message: entry.message.slice(0, 600),
+          ...(jobId || reason ? { ocr: { jobId, reason } } : {}),
+        });
       }
     }
+    const conversion = restoreConversionMetrics(report.conversion);
     reports.push({
       id: typeof report.id === "string" && report.id.length > 0 && report.id.length <= 100
         ? report.id
@@ -141,9 +198,11 @@ function restoreSyncReports(value: unknown): SyncReport[] {
       status: report.status as SyncReport["status"],
       summary: report.summary.slice(0, 2000),
       errors,
+      ...(report.kind === "markdown" ? { kind: "markdown" as const } : {}),
       ...(report.action === "source-settings" ? { action: "source-settings" as const } : {}),
       ...(typeof report.destination === "string" ? { destination: report.destination } : {}),
       ...(restoreMetrics(report.metrics) ? { metrics: restoreMetrics(report.metrics) } : {}),
+      ...(conversion ? { conversion } : {}),
     });
   }
   return reports.sort((left, right) => right.finishedAt - left.finishedAt);
@@ -163,6 +222,7 @@ interface ExtractedArticle {
 interface ExtractionError {
   title: string;
   message: string;
+  ocr?: OcrJobFailure;
 }
 
 interface ExtractionResult {
@@ -180,6 +240,13 @@ interface ExtractionResult {
   items?: ExtractedArticle[];
   errors?: ExtractionError[];
   skippedTitles?: string[];
+  skippedSourceIds?: string[];
+}
+
+interface PdfConversionFile {
+  path: string;
+  title: string;
+  /** Recovery of an already downloaded PDF never opts into a cloud upload. */
 }
 
 interface SyncedArticleMetadata {
@@ -207,8 +274,10 @@ interface SyncRun {
   report?: SyncReport;
   stagingDirectory?: string;
   pdfValidationAbort?: AbortController;
-  savedPdfFiles?: { path: string; title: string }[];
+  savedPdfFiles?: PdfConversionFile[];
   markdownAbort?: AbortController;
+  markdownErrors?: ExtractionError[];
+  markdownMetrics?: MarkdownConversionMetrics;
   destination?: string;
   metrics?: SyncMetrics;
 }
@@ -277,8 +346,12 @@ const DEFAULT_SETTINGS: ImaSpeedSyncSettings = {
   showOperationBefore: true,
   showOperationAfter: true,
   enableMarkdownConversion: true,
-  markdownConversionScope: "all",
+  imageOcrEnabled: false,
   embedPdfLinkInMarkdown: true,
+  ocrProvider: "api",
+  ocrRuntimePath: "",
+  ocrMobileRuntimePath: "",
+  ocrSecretId: "ima-share-sync-baidu-ocr",
   language: "auto",
 };
 
@@ -304,10 +377,12 @@ class SyncHistoryPanel {
   private focusedId?: string;
   private focusedRecord?: HTMLDetailsElement;
   private expandedIds = new Set<string>();
+  private progressEl?: HTMLParagraphElement;
 
   constructor(private readonly getReports: () => readonly SyncReport[],
     focusedId: string | undefined, private readonly onViewed: (reports: readonly SyncReport[]) => void,
-    private readonly onClosed: () => void, private readonly onSourceSettings?: () => void) {
+    private readonly onClosed: () => void, private readonly onSourceSettings: () => void,
+    private readonly getProgress: () => string) {
     this.focusedId = focusedId;
     if (focusedId) this.expandedIds.add(focusedId);
     const index = getReports().findIndex((report) => report.id === focusedId);
@@ -322,6 +397,8 @@ class SyncHistoryPanel {
   private render(): void {
     this.contentEl.empty();
     renderPageHeader(this.contentEl, "同步日志", () => this.close());
+    this.progressEl = this.contentEl.createEl("p", { attr: { role: "status" } });
+    this.updateProgress();
     const reports = this.getReports();
     const focusedIndex = this.focusedId ? reports.findIndex((report) => report.id === this.focusedId) : -1;
     if (focusedIndex >= 0) this.page = Math.floor(focusedIndex / SYNC_REPORTS_PER_PAGE);
@@ -336,14 +413,25 @@ class SyncHistoryPanel {
       record.open = !!report.id && this.expandedIds.has(report.id);
       if (record.open && report.id === this.focusedId) focusedRecord = record;
       record.createEl("summary", {
-        text: `${new Date(report.finishedAt).toLocaleString("zh-CN")} · ${report.interactive ? "手动同步" : "自动同步"} · ${report.status === "failed" ? "存在异常" : report.status === "canceled" ? "已取消" : "已完成"}`,
+        text: `${new Date(report.finishedAt).toLocaleString("zh-CN")} · ${report.kind === "markdown" ? "文档转换" : report.interactive ? "手动同步" : "自动同步"} · ${report.status === "failed" ? "存在异常" : report.status === "canceled" ? "已取消" : "已完成"}`,
       });
       record.createEl("p", { text: report.summary });
+      if (report.conversion) {
+        record.createEl("p", { text: formatConversionMetrics(report.conversion) });
+      }
       if (report.action === "source-settings" && this.onSourceSettings) {
         record.createEl("button", { text: "检查来源" }).addEventListener("click", this.onSourceSettings);
       }
       for (const error of report.errors) {
-        record.createEl("p", { text: `${error.title || "同步任务"}：${error.message}` });
+        const title = error.title || "同步任务";
+        if (!error.ocr) {
+          record.createEl("p", { text: `${title}：${error.message}` });
+          continue;
+        }
+        const failure = record.createEl("details", { cls: "ima-share-sync-ocr-failure" });
+        failure.createEl("summary", { text: title });
+        failure.createEl("p", { text: error.ocr.reason ? `百度返回：${error.ocr.reason}` : "百度未返回详细错误。" });
+        if (error.ocr.jobId) failure.createEl("p", { text: `百度任务 ID：${error.ocr.jobId}` });
       }
       record.addEventListener("toggle", () => {
         if (record.open) {
@@ -377,6 +465,13 @@ class SyncHistoryPanel {
     });
     this.onViewed(this.focusedId ? pageReports.filter((report) => report.id === this.focusedId) : pageReports);
     this.focusedRecord = focusedRecord;
+  }
+
+  updateProgress(): void {
+    if (!this.progressEl) return;
+    const progress = this.getProgress();
+    this.progressEl.hidden = !progress;
+    this.progressEl.textContent = progress;
   }
 
   revealFocusedReport(): void {
@@ -683,6 +778,7 @@ class ImaSpeedSyncView extends ItemView {
   private renderTimer: number | null = null;
   private page: "home" | "articles" | "history" = "home";
   private history?: SyncHistoryPanel;
+  private conversionProgressEl?: HTMLParagraphElement;
   private scrollPositions = new Map<string, number>();
 
   showHistory(panel: SyncHistoryPanel): void {
@@ -753,6 +849,7 @@ class ImaSpeedSyncView extends ItemView {
 
   render(): void {
     this.contentEl.empty();
+    this.conversionProgressEl = undefined;
     if (this.page === "history" && this.history) {
       this.history.mount(this.contentEl);
       return;
@@ -762,9 +859,12 @@ class ImaSpeedSyncView extends ItemView {
       this.renderArticles();
       return;
     }
-    const heading = this.contentEl.createDiv({ cls: "ima-share-sync-heading" });
-    heading.createEl("h3", { text: "IMA Share Sync" });
-    heading.createSpan({
+    const heading = this.contentEl.createDiv({ cls: "ima-share-sync-heading ima-palette-9" });
+    const logo = heading.createSpan({ cls: "ima-share-sync-brand-icon", attr: { "aria-hidden": "true" } });
+    setIcon(logo, IMA_SHARE_SYNC_ICON_ID);
+    const identity = heading.createDiv({ cls: "ima-share-sync-brand-text" });
+    identity.createEl("h3", { text: this.getDisplayText() });
+    identity.createSpan({
       cls: "ima-share-sync-version",
       text: `v${this.plugin.manifest.version}`,
       attr: { "aria-label": `当前版本 ${this.plugin.manifest.version}` },
@@ -796,6 +896,8 @@ class ImaSpeedSyncView extends ItemView {
     settingsButton.addEventListener("click", () => this.plugin.openSettings());
 
     this.plugin.renderSyncStatus(this.contentEl);
+    this.conversionProgressEl = this.contentEl.createEl("p", { attr: { role: "status" } });
+    this.updateConversionProgress();
 
     const entry = this.contentEl.createEl("button", {
       text: `文章（${this.plugin.getSortedArticles().length}）`, cls: "ima-share-sync-nav-entry",
@@ -804,6 +906,14 @@ class ImaSpeedSyncView extends ItemView {
     entry.addEventListener("click", () => this.navigate("articles"));
     this.plugin.renderHistoryEntry(this.contentEl);
     silenceHoverHints(this.contentEl);
+  }
+
+  updateConversionProgress(): void {
+    if (this.page === "history") this.history?.updateProgress();
+    if (!this.conversionProgressEl) return;
+    const progress = this.plugin.getConversionProgressText();
+    this.conversionProgressEl.hidden = !progress;
+    this.conversionProgressEl.textContent = progress;
   }
 
   private renderArticles(): void {
@@ -881,7 +991,7 @@ class ImaSpeedSyncSettingTab extends PluginSettingTab {
 
   override getSettingDefinitions(): SettingDefinitionItem[] {
     // Index names only: registering settings must not read IMA or change saved options.
-    const aliases = ["IMA", "同步", "知识库", "文件夹", "同名覆盖", "PDF", "Markdown", "自动同步", "日志"];
+    const aliases = ["IMA", "同步", "知识库", "文件夹", "同名覆盖", "PDF", "Markdown", "自动同步", "日志", "OCR", "扫描 PDF", "访问令牌", "云端识别", "Baidu API", "AI Studio", "access token"];
     for (const language of ["zh", "en"] as const) {
       for (const [key, value] of Object.entries(getStrings(language))) {
         if (typeof value === "string" && (key.endsWith("Name") || key.startsWith("tab"))) aliases.push(value);
@@ -995,20 +1105,21 @@ class ImaSpeedSyncSettingTab extends PluginSettingTab {
     this.sourcePicker = picker; picker.open();
   }
 
+  private locationChooser(root: HTMLElement, label: string, value: string, accessibleLabel: string, action: () => void) {
+    const row = new Setting(root).setName(label);
+    row.settingEl.addClass("ima-source-location-row");
+    const b = row.controlEl.createEl("button", { cls: "ima-source-chooser",
+      attr: { type: "button", "aria-label": accessibleLabel, "aria-haspopup": "dialog" } });
+    b.createSpan({ cls: "ima-source-path-label", text: value }); setIcon(b.createSpan(), "chevron-down");
+    b.disabled = this.scopeSaving;
+    b.addEventListener("click", action);
+    return { row, b };
+  }
+
   private renderIdentitySource(root: HTMLElement): void {
     const values = this.getScopeDraft().values;
-    const chooser = (label: string, value: string, action: () => void) => {
-      const row = new Setting(root).setName(label);
-      const b = row.controlEl.createEl("button", { cls: "ima-source-chooser",
-        attr: { type: "button", "aria-label": "选择" + label, "aria-haspopup": "dialog" } });
-      b.createSpan({ cls: "ima-source-path-label", text: value }); setIcon(b.createSpan(), "chevron-down");
-      b.addEventListener("click", action);
-      return { row, b };
-    };
     const location = [values.knowledgeBaseName, ...(values.sourceTargetKind === "folder" ? sourcePath(values) : [])].filter(Boolean).join(" / ");
-    const kb = chooser("知识库与文件夹", location || "选择来源", () => { void this.chooseIdentity("knowledge-bases"); });
-    kb.row.settingEl.addClass("ima-source-location-row");
-    kb.b.setAttribute("aria-label", "选择来源");
+    const kb = this.locationChooser(root, "知识库与文件夹", location || "选择来源", "选择来源", () => { void this.chooseIdentity("knowledge-bases"); });
     this.kbInputEl = kb.b;
     const refresh = kb.row.infoEl.createEl("button", { cls: "ima-source-refresh", attr: { type: "button", "aria-label": "刷新来源" } });
     setIcon(refresh, "refresh-cw");
@@ -1102,6 +1213,7 @@ class ImaSpeedSyncSettingTab extends PluginSettingTab {
         title: kind === "knowledge-bases" ? "选择知识库" : kind === "folders" ? "选择源文件夹" : "选择保存位置",
         selected: kind === "knowledge-bases" ? [values.knowledgeBaseName] : kind === "folders" ? sourcePath(values) : [values.destinationPath],
         browse: kind === "folders", rename: kind !== "destination" && !!draft.original.knowledgeBaseName,
+        editablePath: kind === "destination",
         preserveIdentity: draft.preserveIdentity,
         load: async parent => {
           if (kind === "destination") return { names: this.app.vault.getAllLoadedFiles()
@@ -1799,10 +1911,8 @@ class ImaSpeedSyncSettingTab extends PluginSettingTab {
           }));
     }
 
-    new Setting(saveControls).setName(s.destPathName)
-      .addText(text => text.setPlaceholder(s.destPathPlaceholder).setValue(scopeValues.destinationPath).setDisabled(this.scopeSaving)
-        .onChange(value => { scopeValues.destinationPath = value; this.updateScopeSummary?.(); this.scopeChanged(); }))
-      .addButton(button => button.setButtonText("选择").setDisabled(this.scopeSaving).onClick(() => this.chooseScope("destination")));
+    this.locationChooser(saveControls, s.destPathName, scopeValues.destinationPath || s.destPathPlaceholder,
+      "选择保存位置", () => this.chooseScope("destination"));
     new Setting(saveAdvanced).setName(s.overwriteName).setDesc(s.overwriteDesc)
       .addToggle(toggle => toggle.setValue(scopeValues.overwriteSameName).setDisabled(this.scopeSaving).onChange(value => {
         scopeValues.overwriteSameName = value; this.scopeChanged();
@@ -1869,29 +1979,17 @@ class ImaSpeedSyncSettingTab extends PluginSettingTab {
       .addToggle((toggle) =>
         toggle.setValue(this.plugin.settings.enableMarkdownConversion).onChange(async (value) => {
           this.plugin.settings.enableMarkdownConversion = value;
+          if (!value) {
+            this.plugin.cancelMarkdownConversion();
+          }
           await this.plugin.saveSettings();
           this.renderSettings();
         }),
       );
 
     if (this.plugin.settings.enableMarkdownConversion) {
+      renderOcrSettings(panelMarkdown, this.plugin, () => this.updateMarkdownDashboard());
       this.renderMarkdownDashboard(panelMarkdown);
-
-      new Setting(panelMarkdown)
-        .setName(s.markdownScopeName)
-        .setDesc(s.markdownScopeDesc)
-        .addDropdown((dropdown) =>
-          dropdown
-            .addOption("all", s.markdownScopeAll)
-            .addOption("text_only", s.markdownScopeText)
-            .addOption("image_only", s.markdownScopeImage)
-            .setValue(this.plugin.settings.markdownConversionScope)
-          .onChange(async (value) => {
-            if (value !== "all" && value !== "text_only" && value !== "image_only") return;
-              this.plugin.settings.markdownConversionScope = value;
-              await this.plugin.saveSettings();
-            }),
-        );
 
       new Setting(panelMarkdown)
         .setName(s.embedPdfLinkName)
@@ -1926,34 +2024,37 @@ class ImaSpeedSyncSettingTab extends PluginSettingTab {
     if (!this.mdDashboardEl || !this.mdDashboardEl.isConnected) return;
     const s = getStrings(this.plugin.settings.language);
     const state = this.plugin.markdownDashboardState;
+    const converting = state.status === "converting";
 
     if (this.mdStatusTextEl) {
       const badge = this.mdStatusTextEl.parentElement;
+      const issue = state.status === "failed" || (state.status === "completed" && (state.failed > 0 || !!state.deferred));
       if (badge) {
-        badge.className = `ima-md-status-badge is-${state.status}`;
+        badge.className = `ima-md-status-badge is-${issue ? "issue" : state.status}`;
       }
-      this.mdStatusTextEl.textContent =
-        state.status === "converting"
-          ? s.mdStatusConverting
-          : state.status === "completed"
-            ? s.mdStatusCompleted
-            : s.mdStatusIdle;
+      let statusText = s.mdStatusIdle;
+      switch (state.status) {
+        case "converting": statusText = s.mdStatusConverting; break;
+        case "completed": statusText = s.mdStatusCompleted(state.failed, state.deferred ?? 0); break;
+        case "canceled": statusText = s.mdStatusCanceled; break;
+        case "failed": statusText = s.mdStatusFailed; break;
+      }
+      this.mdStatusTextEl.textContent = statusText;
     }
 
     if (this.mdProgressSectionEl) {
-      const showProgress = state.status === "converting" || (state.status === "completed" && state.total > 0);
-      this.mdProgressSectionEl.style.display = showProgress ? "block" : "none";
+      this.mdProgressSectionEl.style.display = converting ? "block" : "none";
 
-      const pct = state.total > 0 ? Math.round((state.current / state.total) * 100) : (state.status === "completed" ? 100 : 0);
+      const pct = converting && state.total > 0 ? Math.round((state.current / state.total) * 100) : 0;
       if (this.mdProgressBarEl) {
         this.mdProgressBarEl.style.width = `${pct}%`;
       }
       if (this.mdProgressTextEl) {
-        this.mdProgressTextEl.textContent = s.mdProgressText(state.current, state.total, pct);
+        this.mdProgressTextEl.textContent = converting ? s.mdProgressText(state.current, state.total, pct) : "";
       }
       if (this.mdCurrentTitleEl) {
-        this.mdCurrentTitleEl.style.display = state.status === "converting" && state.currentTitle ? "block" : "none";
-        this.mdCurrentTitleEl.textContent = state.currentTitle ? `当前正在处理：${state.currentTitle}` : "";
+        this.mdCurrentTitleEl.style.display = converting && state.currentTitle ? "block" : "none";
+        this.mdCurrentTitleEl.textContent = converting ? state.currentTitle ?? "" : "";
       }
     }
 
@@ -1975,8 +2076,9 @@ class ImaSpeedSyncSettingTab extends PluginSettingTab {
     }
 
     if (this.mdScanBtnEl) {
-      this.mdScanBtnEl.disabled = state.status === "converting";
-      this.mdScanBtnEl.textContent = state.status === "converting" ? s.mdBtnConverting : s.manualScanBtn;
+      const pending = this.plugin.pendingOcrCount;
+      this.mdScanBtnEl.disabled = !converting && (!this.plugin.settings.imageOcrEnabled || pending === 0);
+      this.mdScanBtnEl.textContent = converting ? s.mdStopConversion : s.mdProcessPending(pending);
     }
   }
 
@@ -1989,7 +2091,7 @@ class ImaSpeedSyncSettingTab extends PluginSettingTab {
     header.createDiv({ cls: "ima-md-card-title", text: s.mdStatusHeading });
     const badge = header.createDiv({ cls: "ima-md-status-badge is-idle" });
     badge.createSpan({ cls: "ima-md-status-dot" });
-    this.mdStatusTextEl = badge.createSpan({ text: s.mdStatusIdle });
+    this.mdStatusTextEl = badge.createSpan({ text: s.mdStatusIdle, attr: { role: "status" } });
 
     this.mdProgressSectionEl = card.createDiv({ cls: "ima-md-progress-section" });
     const meta = this.mdProgressSectionEl.createDiv({ cls: "ima-md-progress-meta" });
@@ -2017,11 +2119,12 @@ class ImaSpeedSyncSettingTab extends PluginSettingTab {
 
     this.mdScanBtnEl = footer.createEl("button", {
       cls: "mod-cta ima-md-scan-btn",
-      text: s.manualScanBtn,
+      text: s.mdProcessPending(this.plugin.pendingOcrCount),
       attr: { type: "button" },
     });
     this.mdScanBtnEl.addEventListener("click", () => {
-      void this.plugin.convertAllVaultPdfFiles(true);
+      if (this.plugin.markdownDashboardState.status === "converting") this.plugin.cancelMarkdownConversion();
+      else void this.plugin.retryPendingMarkdown();
     });
 
     this.updateMarkdownDashboard();
@@ -2329,6 +2432,8 @@ export default class ImaSpeedSyncPlugin extends Plugin {
   private activeRun: SyncRun | null = null;
   private nextRunId = 1;
   private unloaded = false;
+  private markdownController: AbortController | null = null;
+  private pendingMarkdown = new Set<string>();
   syncReports: SyncReport[] = [];
   syncedAttachments: SyncedAttachment[] = [];
   private historyPanel: SyncHistoryPanel | null = null;
@@ -2451,9 +2556,19 @@ export default class ImaSpeedSyncPlugin extends Plugin {
   };
 
   updateMarkdownDashboardUI(): void {
-    if (this.settingsTab) {
-      this.settingsTab.updateMarkdownDashboard();
+    this.settingsTab?.updateMarkdownDashboard();
+    for (const leaf of this.app.workspace?.getLeavesOfType?.(VIEW_TYPE) ?? []) {
+      if (leaf.view instanceof ImaSpeedSyncView) leaf.view.updateConversionProgress();
     }
+  }
+
+  getConversionProgressText(): string {
+    const state = this.markdownDashboardState;
+    const pending = this.pendingMarkdown.size;
+    if (state.status !== "converting") return pending ? `图片 OCR 待转换 ${pending} 份 · 在文档转换中手动补转` : "";
+    const counts = `已生成 ${state.completed} · 跳过 ${state.skipped} · 失败 ${state.failed} · 待转换 ${state.deferred ?? 0}`;
+    return `正在生成 Markdown：已处理 ${state.current}/${state.total} · ${counts}` +
+      (state.currentTitle ? ` · ${state.currentTitle}` : "");
   }
 
   get isRunning(): boolean {
@@ -2833,6 +2948,13 @@ export default class ImaSpeedSyncPlugin extends Plugin {
     registerFlowIcon();
     const stored = (await this.loadData()) as (Partial<ImaSpeedSyncSettings> & { syncReports?: unknown; syncedAttachments?: unknown }) | null;
     const { syncReports, syncedAttachments, ...saved } = stored ?? {};
+    const pendingFile = this.getPendingMarkdownFile();
+    try {
+      if (await this.app.vault.adapter.exists(pendingFile)) {
+        const pending: unknown = JSON.parse(await this.app.vault.adapter.read(pendingFile));
+        if (Array.isArray(pending)) this.pendingMarkdown = new Set(pending.filter(isPendingPdfPath));
+      }
+    } catch (error) { console.error("读取待转换队列失败", error); }
     this.syncedAttachments = Array.isArray(syncedAttachments) ? syncedAttachments.filter((entry: unknown): entry is SyncedAttachment => {
       if (!entry || typeof entry !== "object") return false;
       const value = entry as Record<string, unknown>;
@@ -2842,6 +2964,11 @@ export default class ImaSpeedSyncPlugin extends Plugin {
     this.settings = {
       ...DEFAULT_SETTINGS,
       ...saved,
+      imageOcrEnabled: saved.imageOcrEnabled === true,
+      ocrProvider: typeof saved.imageOcrEnabled === "boolean" && isOcrProvider(saved.ocrProvider) ? saved.ocrProvider : "api",
+      ocrRuntimePath: typeof saved.ocrRuntimePath === "string" ? saved.ocrRuntimePath : "",
+      ocrMobileRuntimePath: typeof saved.ocrMobileRuntimePath === "string" ? saved.ocrMobileRuntimePath : "",
+      ocrSecretId: typeof saved.ocrSecretId === "string" ? saved.ocrSecretId : "ima-share-sync-baidu-ocr",
       // An existing installation must not silently expand from speed-reader titles to all articles.
       contentMode: saved.contentMode ?? (stored ? "speed-reader" : "general"),
       // Do not silently expand the scope of an existing general-mode installation.
@@ -2925,6 +3052,7 @@ export default class ImaSpeedSyncPlugin extends Plugin {
 
   override onunload(): void {
     this.unloaded = true;
+    this.markdownController?.abort();
     this.desktopProbeProcess?.kill();
     this.activeNotice?.notice.hide();
     this.activeNotice = null;
@@ -3019,7 +3147,7 @@ export default class ImaSpeedSyncPlugin extends Plugin {
       for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE)) {
         if (leaf.view instanceof ImaSpeedSyncView) leaf.view.showHome();
       }
-    }, () => this.openSourceSettings());
+    }, () => this.openSourceSettings(), () => this.getConversionProgressText());
     const panel = this.historyPanel;
     const existing = this.app.workspace.getLeavesOfType(VIEW_TYPE)[0];
     if (existing?.view instanceof ImaSpeedSyncView) existing.view.showHistory(panel);
@@ -3077,6 +3205,9 @@ export default class ImaSpeedSyncPlugin extends Plugin {
     if (this.activeRun?.metrics) {
       report.metrics = { ...this.activeRun.metrics };
       report.destination = this.activeRun.destination;
+    }
+    if (report.kind !== "markdown" && this.activeRun?.markdownMetrics) {
+      report.conversion = this.activeRun.markdownMetrics;
     }
     report.id = randomUUID();
     report.read = false;
@@ -3400,8 +3531,9 @@ export default class ImaSpeedSyncPlugin extends Plugin {
       if (interactive) this.notifyManual("请在“同步与保存”中确认同步范围，并关闭范围提醒。");
       return;
     }
-    if (this.running || this.sourceRebindSession) {
+    if (this.running || this.sourceRebindSession || this.markdownController) {
       if (interactive) this.notifyManual("IMA Share Sync 正在运行，请稍候。");
+      else if (this.markdownController && this.settings.autoSync) this.scheduleDeferredSync(false, maxItems);
       return;
     }
     if (this.unloaded) return;
@@ -3649,6 +3781,20 @@ export default class ImaSpeedSyncPlugin extends Plugin {
         }
       }
 
+      let convertedMarkdown = 0;
+      let deferredMarkdown = 0;
+      let failedMarkdown = 0;
+      const markdownErrors: ExtractionError[] = [];
+      if (!extractionCanceled && settings.enableMarkdownConversion) {
+        const recovered = await this.findMissingMarkdownPdfs(result.skippedSourceIds ?? [], settings);
+        this.assertRunActive(run);
+        const queued = new Set((run.savedPdfFiles ?? []).map(file => file.path.toLocaleLowerCase()));
+        for (const file of recovered) {
+          if (queued.has(file.path.toLocaleLowerCase())) continue;
+          (run.savedPdfFiles ??= []).push(file);
+          queued.add(file.path.toLocaleLowerCase());
+        }
+      }
       if (!extractionCanceled && settings.enableMarkdownConversion && run.savedPdfFiles && run.savedPdfFiles.length > 0) {
         const hasErrors = issues.length > 0 || saveErrors.length > 0 || counts.conflict > 0;
         if (!hasErrors && run.card && this.settings.notificationsEnabled && this.settings.showOperationAfter) {
@@ -3672,10 +3818,13 @@ export default class ImaSpeedSyncPlugin extends Plugin {
         try {
           const converted = await this.convertPdfFilesToMarkdown(run.savedPdfFiles, interactive, run);
           this.assertRunActive(run);
+          convertedMarkdown = converted?.completed ?? 0;
+          deferredMarkdown = converted?.deferred ?? 0;
           if (converted?.failed) {
-            const error = { title: "PDF → Markdown", message: `${converted.failed} 个 PDF 转换失败，原 PDF 已保留；详细原因见 Obsidian 开发者控制台。` };
-            saveErrors.push(error);
-            issues.push(error);
+            failedMarkdown = converted.failed;
+            markdownErrors.push(...(run.markdownErrors?.length ? run.markdownErrors :
+              [{ title: "PDF → Markdown", message: `${converted.failed} 个 PDF 转换失败，原 PDF 已保留。` }]));
+            issues.push(...markdownErrors);
           }
         } catch (err) {
           this.assertRunActive(run);
@@ -3685,9 +3834,10 @@ export default class ImaSpeedSyncPlugin extends Plugin {
         }
       }
 
-      const errors = [...(result.errors ?? []), ...saveErrors];
-      const articleErrors = errors.filter((error) => error.title.trim());
-      const taskErrors = errors.filter((error) => !error.title.trim());
+      const syncErrors = [...(result.errors ?? []), ...saveErrors];
+      const failedCount = syncErrors.filter(error => error.title.trim()).length + failedMarkdown;
+      const errors = [...syncErrors, ...markdownErrors];
+      const taskErrors = syncErrors.filter((error) => !error.title.trim());
       const firstTaskError = taskErrors[0];
       const preserved = counts.created + counts.updated + counts.unchanged;
       const resultParts = [
@@ -3696,7 +3846,9 @@ export default class ImaSpeedSyncPlugin extends Plugin {
         counts.unchanged ? `无变化 ${counts.unchanged} 篇` : "",
         counts.skipped ? `跳过 ${counts.skipped} 篇` : "",
         counts.conflict ? `同名冲突 ${counts.conflict} 篇（未覆盖）` : "",
-        articleErrors.length ? `失败 ${articleErrors.length} 篇` : "",
+        convertedMarkdown ? `生成 Markdown ${convertedMarkdown} 篇` : "",
+        deferredMarkdown ? `图片 OCR 待转换 ${deferredMarkdown} 篇` : "",
+        failedCount ? `失败 ${failedCount} 篇` : "",
         taskErrors.length ? "流程异常" : "",
       ].filter(Boolean).join(" · ");
       const summary = extractionCanceled
@@ -4304,6 +4456,8 @@ export default class ImaSpeedSyncPlugin extends Plugin {
     if (result.busy !== undefined && typeof result.busy !== "boolean") return false;
     if (result.canceled !== undefined && typeof result.canceled !== "boolean") return false;
     if (result.locked !== undefined && typeof result.locked !== "boolean") return false;
+    if (result.skippedSourceIds !== undefined && (!Array.isArray(result.skippedSourceIds) ||
+      !result.skippedSourceIds.every(id => typeof id === "string" && id.length > 0))) return false;
     if (
       result.items !== undefined &&
       (!Array.isArray(result.items) ||
@@ -4558,14 +4712,99 @@ export default class ImaSpeedSyncPlugin extends Plugin {
     }
   }
 
+  cancelMarkdownConversion(): void {
+    this.markdownController?.abort();
+  }
+
+  private localOcrRuntime(mode: LocalOcrMode): string {
+    const configured = mode === "local-mobile" ? this.settings.ocrMobileRuntimePath : this.settings.ocrRuntimePath;
+    return configured.trim() || defaultOcrRuntime(mode);
+  }
+
+  get supportsLocalOcr(): boolean {
+    return Platform.isWin && this.app.vault.adapter instanceof FileSystemAdapter;
+  }
+
+  async isLocalOcrReady(mode: LocalOcrMode): Promise<boolean> {
+    if (!this.supportsLocalOcr) return false;
+    try { await checkOcrRuntime(this.localOcrRuntime(mode), mode); return true; }
+    catch { return false; }
+  }
+
+  get pendingOcrCount(): number {
+    return this.pendingMarkdown.size;
+  }
+
+  private async findMissingMarkdownPdfs(sourceIds: string[], settings: Readonly<ImaSpeedSyncSettings>): Promise<PdfConversionFile[]> {
+    const selected = new Set(sourceIds);
+    const scope = this.createSourceScope(settings);
+    const destination = this.getEffectiveDestinationPath(settings) + "/";
+    const found = new Map<string, PdfConversionFile>();
+    for (const entry of this.syncedAttachments) {
+      if (!selected.has(entry.sourceId) || entry.sourceScope !== scope || !entry.path.startsWith(destination)) continue;
+      const file = this.app.vault.getAbstractFileByPath(entry.path);
+      if (!(file instanceof TFile) || file.extension.toLocaleLowerCase() !== "pdf") continue;
+      const mdPath = file.path.replace(/\.pdf$/i, ".md");
+      // Check disk as well as the index: a note written by a user may not be indexed yet.
+      if (this.app.vault.getAbstractFileByPath(mdPath) || await this.app.vault.adapter.exists(mdPath)) continue;
+      found.set(file.path.toLocaleLowerCase(), { path: file.path, title: file.basename });
+    }
+    return [...found.values()];
+  }
+
+
+  private getPendingMarkdownFile(): string {
+    const dir = this.manifest?.dir ?? `${this.app.vault.configDir}/plugins/ima-speed-sync`;
+    return `${dir}/pending-markdown.json`;
+  }
+
+  async retryPendingMarkdown(): Promise<void> {
+    if (this.unloaded || this.running || this.markdownController) {
+      this.notifyManual("请等当前任务结束后再补转");
+      return;
+    }
+    if (!this.settings.enableMarkdownConversion || !this.settings.imageOcrEnabled) {
+      this.notifyManual("请先手动开启图片 OCR");
+      return;
+    }
+    if (!this.pendingMarkdown.size) return;
+    if (this.settings.ocrProvider === "api" && !this.app.secretStorage?.getSecret(this.settings.ocrSecretId)?.trim()) {
+      const en = getAppLanguage(this.settings.language) === "en";
+      this.notifyManual(en ? "Set up your Baidu AI Studio API token before running cloud OCR." : "请先配置百度 AI Studio API 令牌，再运行云端补转。");
+      return;
+    }
+    const files = [...this.pendingMarkdown].map(pdfPath => ({
+      path: pdfPath, title: path.posix.basename(pdfPath, path.posix.extname(pdfPath)),
+    }));
+    await this.convertPdfFilesToMarkdown(files, true, undefined, "ocr-pending");
+  }
+
   async convertPdfFilesToMarkdown(
-    pdfFiles: { path: string; title: string }[],
+    pdfFiles: PdfConversionFile[],
     showNotice = true,
     run?: SyncRun,
+    intent: "text-and-queue" | "ocr-pending" = "text-and-queue",
   ): Promise<ConvertResultSummary | undefined> {
     if (!this.settings.enableMarkdownConversion || !pdfFiles.length) return;
     if (!(this.app.vault.adapter instanceof FileSystemAdapter)) return;
+    if (this.markdownController) {
+      if (showNotice) this.notifyManual("已有转换正在运行");
+      return;
+    }
 
+    const started = performance.now();
+    const conversion: MarkdownConversionMetrics = {
+      durationMs: 0,
+      uploadedFiles: 0,
+      uploadedBytes: 0,
+      unconfirmedFiles: 0,
+      unconfirmedPdfBytes: 0,
+    };
+    const finishConversion = () => {
+      conversion.durationMs = Math.round(performance.now() - started);
+      if (run) run.markdownMetrics = conversion;
+      return Date.now();
+    };
     const vaultBase = this.app.vault.adapter.getBasePath();
 
     const tasks: ConvertTask[] = [];
@@ -4577,7 +4816,7 @@ export default class ImaSpeedSyncPlugin extends Plugin {
         mdPath: fullMdPath,
         title: file.title,
         embedPdfLink: this.settings.embedPdfLinkInMarkdown,
-        scope: this.settings.markdownConversionScope,
+        scope: "all",
       });
     }
 
@@ -4588,7 +4827,16 @@ export default class ImaSpeedSyncPlugin extends Plugin {
     }
 
     const abortController = new AbortController();
+    this.markdownController = abortController;
     if (run) run.markdownAbort = abortController;
+    let batchHold = "";
+    const secretId = this.settings.ocrSecretId;
+    const interactive = showNotice;
+    const allowOcr = intent === "ocr-pending" && interactive && !run && this.settings.imageOcrEnabled;
+    const provider = this.settings.ocrProvider;
+    const conversionErrors: ExtractionError[] = [];
+    let queueChanged = false;
+    let uploadApproval: Promise<boolean> | undefined;
 
     this.markdownDashboardState = {
       status: "converting",
@@ -4607,28 +4855,93 @@ export default class ImaSpeedSyncPlugin extends Plugin {
     try {
       const result = await runMarkdownConversion(
         tasks,
-        "", // Desktop always supplies processSinglePdf; do not embed the unused Node test runner.
+        "", // Desktop supplies the async text/OCR processor; no worker eval is needed.
         (progress, total) => {
-          const task = tasks[progress - 1];
-          const rawTitle = task?.title?.trim() ?? "";
-          const displayTitle = rawTitle
-            ? `：${rawTitle.length > 20 ? rawTitle.slice(0, 20) + "…" : rawTitle}`
-            : "";
           this.markdownDashboardState.current = progress;
-          this.markdownDashboardState.currentTitle = rawTitle;
+          this.markdownDashboardState.currentTitle = undefined;
           this.updateMarkdownDashboardUI();
-
-          if (notice) {
-            notice.setMessage(`正在转换 Markdown 笔记 (${progress}/${total})${displayTitle}`);
-          }
-          if (run) {
-            this.updateOperationCard(run, `正在生成 Markdown 笔记 (${progress}/${total})${displayTitle}`);
-          }
+          notice?.setMessage(`正在转换 Markdown 笔记 (${progress}/${total})…`);
+          if (run) this.updateOperationCard(run, `正在生成 Markdown 笔记 (${progress}/${total})…`);
         },
         abortController.signal,
-        processSinglePdf,
+        async task => {
+          const state = this.markdownDashboardState;
+          const relative = path.relative(vaultBase, task.pdfPath).split(path.sep).join("/");
+          state.currentTitle = task.title;
+          this.updateMarkdownDashboardUI();
+          let deferredReason = "";
+          let ocrFailure: OcrJobFailure | undefined;
+          const result = await processPdfWithOcr(task, async request => {
+            const actualPath = path.relative(await realpath(vaultBase), await realpath(request.pdfPath)).split(path.sep).join("/");
+            if (!isPendingPdfPath(actualPath) || !isPendingPdfPath(relative)) throw new Error("PDF 不在当前笔记库内");
+            if (!this.pendingMarkdown.has(relative)) {
+              this.pendingMarkdown.add(relative);
+              queueChanged = true;
+            }
+            if (!allowOcr || batchHold) {
+              deferredReason = batchHold || (this.settings.imageOcrEnabled ? "等待手动补转" : "图片 OCR 未开启");
+              throw new Error(deferredReason);
+            }
+            const stillAllowed = () => !abortController.signal.aborted && this.settings.enableMarkdownConversion &&
+              this.settings.imageOcrEnabled && this.settings.ocrProvider === provider;
+            try {
+              if (!stillAllowed()) throw new Error("图片 OCR 设置已变更，本轮未继续");
+              if (provider !== "api") {
+                if (!this.supportsLocalOcr) throw new LocalOcrSetupError("本地 OCR 需要 Windows 桌面端");
+                return await recognizeLocal(request, this.localOcrRuntime(provider), (page, total) => {
+                  state.currentTitle = `${task.title} · OCR ${page}/${total} 页`;
+                  this.updateMarkdownDashboardUI();
+                }, provider);
+              }
+
+              // Legacy persistent upload permissions are deliberately ignored.
+              const token = this.app.secretStorage?.getSecret(secretId)?.trim();
+              if (!token) throw new OcrAccountError("请先配置百度 AI Studio 访问令牌");
+              uploadApproval ??= confirmOcr(this.app, "上传到百度 AI Studio？",
+                `本轮最多 ${tasks.length} 份。需要 OCR 的整份 PDF 将发给百度，仅识别所需页，使用你的账户额度。`,
+                "仅允许本轮", abortController.signal);
+              if (!(await uploadApproval)) { abortController.abort(); throw new Error("已取消上传"); }
+              if (!stillAllowed() || this.settings.ocrSecretId !== secretId) throw new Error("云端 OCR 授权已变更，未上传");
+              return await recognizeApi(request, token, true, undefined, undefined, (bytes, accepted) => {
+                if (accepted) {
+                  conversion.uploadedFiles++;
+                  conversion.uploadedBytes += bytes;
+                } else {
+                  conversion.unconfirmedFiles++;
+                  conversion.unconfirmedPdfBytes += bytes;
+                }
+              });
+            } catch (error) {
+              if (error instanceof OcrAccountError || error instanceof LocalOcrMemoryError || error instanceof LocalOcrSetupError) {
+                batchHold = deferredReason = error.message;
+              }
+              if (error instanceof OcrJobError) ocrFailure = error.diagnostic;
+              throw error;
+            }
+          }, provider, abortController.signal);
+          if (deferredReason && isPendingPdfPath(relative)) {
+            if (!conversionErrors.some(item => item.message === deferredReason)) {
+              conversionErrors.push({ title: "图片 OCR 待转换", message: deferredReason });
+            }
+            state.deferred = (state.deferred ?? 0) + 1;
+            return { success: false, skipped: false, deferred: true };
+          }
+          if ((result.success || result.skipped) && this.pendingMarkdown.delete(relative)) queueChanged = true;
+          if (result.skipped) state.skipped++;
+          else if (result.success) state.completed++;
+          else {
+            state.failed++;
+            conversionErrors.push({
+              title: task.title,
+              message: result.error ?? "OCR 失败",
+              ...(ocrFailure ? { ocr: ocrFailure } : {}),
+            });
+          }
+          return result;
+        },
       );
       if (notice) notice.hide();
+      const finishedAt = finishConversion();
       this.markdownDashboardState = {
         status: "completed",
         total: tasks.length,
@@ -4636,29 +4949,53 @@ export default class ImaSpeedSyncPlugin extends Plugin {
         completed: result.completed,
         skipped: result.skipped,
         failed: result.failed,
-        lastFinishedAt: Date.now(),
+        deferred: result.deferred,
+        lastFinishedAt: finishedAt,
       };
       this.updateMarkdownDashboardUI();
 
+      const summary = `文档转换：完成 ${result.completed}，跳过 ${result.skipped}，失败 ${result.failed}` +
+        (result.deferred ? `，图片 OCR 待转换 ${result.deferred}（${conversionErrors.find(e => e.title === "图片 OCR 待转换")?.message ?? "请查看文档转换设置"}）` : "");
+      if (run) run.markdownErrors = conversionErrors;
+      else {
+        await this.recordSyncReport({ finishedAt, interactive, kind: "markdown", status: result.failed ? "failed" : "success",
+          summary, errors: conversionErrors, conversion }, !interactive && result.failed > 0);
+      }
+
       if (showNotice && canNotifyManual) {
-        this.notifyManual(
-          `Markdown 转换完成：新增/更新 ${result.completed} 篇，跳过 ${result.skipped} 篇${result.failed ? `，失败 ${result.failed} 篇` : ""}`,
-        );
+        this.notifyManual(summary);
       }
       return result;
     } catch (err) {
-      this.markdownDashboardState.status = "idle";
+      const canceled = abortController.signal.aborted;
+      const finishedAt = finishConversion();
+      this.markdownDashboardState = {
+        ...this.markdownDashboardState, status: canceled ? "canceled" : "failed", currentTitle: undefined, lastFinishedAt: finishedAt,
+      };
       this.updateMarkdownDashboardUI();
       if (notice) notice.hide();
-      console.error("Markdown 转换执行异常:", err);
-      if (showNotice && this.canNotify(true, true)) {
-        this.notify(`Markdown 转换失败: ${err instanceof Error ? err.message : String(err)}`, true, true, 8000);
+      const message = err instanceof Error ? err.message : String(err);
+      if (!canceled) console.error("Markdown 转换执行异常:", err);
+      if (!run) await this.recordSyncReport({ finishedAt, interactive, kind: "markdown",
+        status: canceled ? "canceled" : "failed", summary: canceled ? "文档转换已取消" : "文档转换失败",
+        errors: canceled ? [] : [{ title: "文档转换", message }], conversion }, false);
+      if (showNotice && this.canNotify(true, !canceled)) {
+        this.notify(canceled ? "文档转换已取消" : `Markdown 转换失败: ${message}`, true, !canceled, 8000);
       }
       if (run) throw err;
     } finally {
+      if (queueChanged && !this.unloaded) {
+        try { await this.app.vault.adapter.write(this.getPendingMarkdownFile(), JSON.stringify([...this.pendingMarkdown], null, 2)); }
+        catch (error) {
+          console.error("保存待转换队列失败", error);
+          this.notify("待转换队列保存失败，重启后可能需要重新加入。", interactive, true, 8000);
+        }
+      }
+      if (this.markdownController === abortController) this.markdownController = null;
       if (run && run.markdownAbort === abortController) {
         run.markdownAbort = undefined;
       }
+      if (!run && !this.unloaded && this.app.workspace) this.refreshView();
     }
   }
 

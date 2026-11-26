@@ -285,6 +285,8 @@ Check $true (Test-ImaGeneralBottom ([pscustomobject]@{Scrollable=$true;ScrollPer
     Check 'new-id,web-id' ($script:openedRecords -join ',') 'notes and web articles use text extraction; known IDs skip'
     Check 2 $result.items.Count 'same-name different source and web article are retained'
     Check 1 $result.skippedTitles.Count 'source ID skip is counted'
+    Check 1 $result.skippedSourceIds.Count 'source ID skip is returned for local Markdown recovery'
+    Check $true ($script:SkipSourceIds.ContainsKey($result.skippedSourceIds[0])) 'recovery ID was skipped without a download'
     Check 1 $result.errors.Count 'unsupported content is explicitly reported'
     Check 2 $script:closedRecords 'each newly opened article is closed once'
 }
@@ -315,6 +317,7 @@ Check $true (Test-ImaGeneralBottom ([pscustomobject]@{Scrollable=$true;ScrollPer
     function Open-ImaGeneralPath { throw 'OFFLINE TEST: unexpected directory navigation' }
     $firstHundred = Invoke-ImaGeneralSync $null
     Check 67 $firstHundred.skippedTitles.Count 'the 67 recognized sources skip before any download'
+    Check 67 $firstHundred.skippedSourceIds.Count 'only recognized selected sources are eligible for local recovery'
     Check 33 $firstHundred.items.Count 'only the 33 missing sources enter the download result'
     Check 0 $firstHundred.errors.Count 'the 67/33 sync split has no stub download errors'
     Check 33 $script:downloadedSourceIds.Count 'there is exactly one download call per missing source'
@@ -324,6 +327,7 @@ Check $true (Test-ImaGeneralBottom ([pscustomobject]@{Scrollable=$true;ScrollPer
     $script:downloadedSourceIds = @()
     $secondHundred = Invoke-ImaGeneralSync $null
     Check 100 $secondHundred.skippedTitles.Count 'a repeat run skips all 100 source identities'
+    Check 100 $secondHundred.skippedSourceIds.Count 'repeat run returns each selected identity for missing Markdown checks'
     Check 0 $secondHundred.items.Count 'a repeat run emits no newly downloaded items'
     Check 0 $script:downloadedSourceIds.Count 'a repeat run calls no external download'
 }

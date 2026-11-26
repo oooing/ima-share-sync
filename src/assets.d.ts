@@ -2,6 +2,10 @@ declare module "*.ps1" {
   const source: string;
   export default source;
 }
+declare module "*.py" {
+  const source: string;
+  export default source;
+}
 
 declare module "ima-pdf-worker" {
   const source: string;

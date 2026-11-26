@@ -68,6 +68,8 @@ button.ima-source-chooser {
 }
 .ima-source-chooser > .ima-source-path-label { flex: 1; min-width: 0; white-space: normal; overflow-wrap: anywhere; line-height: 1.5; }
 .ima-source-chooser > span:last-child { flex-shrink: 0; color: var(--text-muted); }
+.ima-picker-path-field { display: grid; gap: 8px; margin-top: 16px; font-size: var(--font-ui-small); }
+.ima-picker-path-field textarea { width: 100%; min-width: 0; box-sizing: border-box; resize: vertical; white-space: pre-wrap; overflow-wrap: anywhere; }
 .ima-scope-segmented {
   display: flex;
   padding: 3px;
@@ -119,14 +121,42 @@ button.ima-picker-option { flex: 1; display: flex; gap: 10px; justify-content: f
 
 .ima-share-sync-heading {
   display: flex;
-  align-items: baseline;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-block: 1em;
+  align-items: center;
+  gap: 10px;
+  margin-block: 14px;
+}
+
+.ima-share-sync-brand-icon {
+  display: grid;
+  place-items: center;
+  flex: 0 0 38px;
+  height: 38px;
+  box-sizing: border-box;
+  border: 1px solid color-mix(in srgb, var(--ima-flow-accent) 16%, transparent);
+  border-radius: 10px;
+  background: var(--ima-flow-tint);
+  color: var(--ima-flow-accent);
+}
+
+.ima-share-sync-brand-icon svg {
+  display: block;
+  width: 24px;
+  height: 24px;
+}
+
+.ima-share-sync-brand-text {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
 }
 
 .ima-share-sync-heading h3 {
   margin: 0;
+  color: var(--text-normal);
+  font-size: var(--font-ui-medium);
+  font-weight: var(--font-semibold);
+  line-height: 1.25;
+  overflow-wrap: anywhere;
 }
 
 .ima-share-sync-version,
@@ -136,6 +166,8 @@ button.ima-picker-option { flex: 1; display: flex; gap: 10px; justify-content: f
 }
 
 .ima-share-sync-version {
+  font-size: var(--font-ui-smaller, 11.5px);
+  line-height: 1.2;
   white-space: nowrap;
 }
 
@@ -199,6 +231,17 @@ button.ima-picker-option { flex: 1; display: flex; gap: 10px; justify-content: f
 
 .ima-share-sync-report[open] {
   border-color: var(--interactive-accent);
+}
+
+.ima-share-sync-ocr-failure {
+  padding-block: 6px;
+  border-top: 1px solid var(--background-modifier-border);
+}
+
+.ima-share-sync-ocr-failure p {
+  margin-block: 4px 0;
+  margin-inline-start: 12px;
+  color: var(--text-muted);
 }
 
 .ima-share-sync-history-header {
@@ -1801,6 +1844,60 @@ button.ima-cascade-option-row:focus-visible { outline: 2px solid var(--interacti
 /* ==========================================================================
    Markdown 转换看板 (Markdown Dashboard)
    ========================================================================== */
+.ima-ocr-choices {
+  min-inline-size: 0;
+  margin: 4px 0 8px;
+  padding: 0;
+  border: 0;
+}
+
+.ima-ocr-choices legend {
+  margin-block-end: 4px;
+  padding: 0;
+  font-weight: var(--font-semibold);
+}
+
+.ima-ocr-choice {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 6px 0;
+}
+
+.ima-ocr-choice input {
+  flex: none;
+  margin: 3px 0 0;
+  accent-color: var(--interactive-accent);
+}
+
+.ima-ocr-choice small {
+  display: block;
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+
+.ima-ocr-method-details {
+  margin: 2px 0 12px 22px;
+  padding-inline-start: 12px;
+  border-inline-start: 1px solid var(--background-modifier-border);
+}
+
+.ima-ocr-recommended {
+  margin-inline-start: 7px;
+  padding: 1px 6px;
+  border-radius: var(--radius-s);
+  background: var(--background-secondary);
+  color: var(--text-accent);
+  font-size: var(--font-ui-smaller);
+}
+
+.ima-ocr-cloud-guide {
+  display: grid;
+  gap: 4px;
+  margin-block: 6px 0;
+  overflow-wrap: anywhere;
+}
+
 .ima-md-dashboard-card {
   margin: 14px 0 20px 0;
   padding: 16px;
@@ -1847,20 +1944,17 @@ button.ima-cascade-option-row:focus-visible { outline: 2px solid var(--interacti
   border: 1px solid rgba(52, 211, 153, 0.3);
 }
 
+.ima-md-status-badge.is-issue {
+  background: var(--background-primary);
+  color: var(--text-warning);
+  border: 1px solid var(--background-modifier-border);
+}
+
 .ima-md-status-dot {
   width: 6px;
   height: 6px;
   border-radius: 50%;
   background: currentColor;
-}
-
-.ima-md-status-badge.is-converting .ima-md-status-dot {
-  animation: ima-dot-pulse 1.4s infinite ease-in-out;
-}
-
-@keyframes ima-dot-pulse {
-  0%, 100% { opacity: 0.4; transform: scale(0.9); }
-  50% { opacity: 1; transform: scale(1.2); }
 }
 
 .ima-md-progress-section {
@@ -1887,7 +1981,6 @@ button.ima-cascade-option-row:focus-visible { outline: 2px solid var(--interacti
   height: 100%;
   background: var(--interactive-accent);
   border-radius: 999px;
-  transition: width 0.25s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .ima-md-current-title {
@@ -1901,15 +1994,9 @@ button.ima-cascade-option-row:focus-visible { outline: 2px solid var(--interacti
 
 .ima-md-kpi-grid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
   margin-bottom: 12px;
-}
-
-@media (max-width: 520px) {
-  .ima-md-kpi-grid {
-    grid-template-columns: repeat(2, 1fr);
-  }
 }
 
 .ima-md-kpi-item {
@@ -1965,19 +2052,43 @@ button.ima-cascade-option-row:focus-visible { outline: 2px solid var(--interacti
 .ima-identity-inline.is-error { color: var(--text-error); }
 .ima-identity-inline.ima-source-problem {
   margin: 8px 0 16px;
-  padding: 12px 14px;
-  border: 1px solid var(--text-error, #b42318);
-  border-radius: var(--radius-m);
-  color: var(--text-error, #b42318);
-  background: var(--background-modifier-error, rgba(180, 35, 24, 0.08));
-  flex-wrap: wrap;
+  padding: 12px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 10px;
+  color: var(--text-normal);
+  background: var(--background-secondary);
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 8px 10px;
 }
-.ima-source-problem > span:nth-child(2) { flex: 1; min-width: 160px; font-weight: 600; }
+.ima-source-problem > span:first-child { display: flex; color: var(--text-error, #b42318); padding-top: 3px; }
+.ima-source-problem > span:first-child svg > * { stroke-width: 1.5px; vector-effect: non-scaling-stroke; }
+.ima-source-problem > span:nth-child(2) { min-width: 0; line-height: 1.6; overflow-wrap: anywhere; }
+.ima-identity-inline.ima-source-problem > button {
+  min-height: 28px; padding: 2px 8px; margin-top: -2px;
+  border: 1px solid var(--background-modifier-border); border-radius: 6px;
+  background: var(--background-primary); color: var(--text-normal);
+  box-shadow: none; white-space: nowrap;
+}
 .ima-flow-ui button.ima-flow-node.ima-flow-source-error {
-  border-color: var(--text-error, #b42318);
-  background: var(--background-modifier-error, rgba(180, 35, 24, 0.08));
+  border-color: transparent;
+  background: transparent;
 }
-.ima-flow-source-error .ima-flow-hint { color: var(--text-error, #b42318); white-space: normal; }
+.ima-flow-source-error .ima-flow-hint {
+  color: var(--text-muted); white-space: normal; line-height: 1.5;
+  align-items: center; gap: 6px;
+}
+.ima-flow-source-error .ima-flow-hint svg { color: var(--text-error, #b42318); flex-shrink: 0; }
+.theme-dark .ima-source-problem > span:first-child,
+.theme-dark .ima-flow-source-error .ima-flow-hint svg { color: var(--text-error, #ff8a80); }
+@media (hover: hover) {
+  .ima-identity-inline.ima-source-problem > button:not(:disabled):hover { background: var(--background-modifier-hover); }
+}
+@media (max-width: 520px) {
+  .ima-identity-inline.ima-source-problem { grid-template-columns: 18px minmax(0, 1fr); }
+  .ima-identity-inline.ima-source-problem > button { grid-column: 2; justify-self: start; margin-top: 0; }
+}
 .ima-identity-inline button { background: transparent; box-shadow: none; padding: 4px; }
 .ima-identity-breadcrumb { margin-top: 16px; }
 .ima-identity-selected { margin: 8px 0 16px; color: var(--text-accent); overflow-wrap: anywhere; }
@@ -2087,3 +2198,7 @@ button.ima-cascade-option-row:focus-visible { outline: 2px solid var(--interacti
  .ima-flow-modal .setting-item-control{width:100%;max-width:100%;justify-content:flex-start;}
  .ima-flow-modal .ima-source-chooser{width:100%;}
 }
+/* OCR paths use the same full-width reading space as source paths. */
+.ima-ocr-runtime-setting { flex-direction: column; align-items: stretch; }
+.ima-ocr-runtime-setting .setting-item-control { width: 100%; justify-content: stretch; }
+.ima-ocr-runtime-setting textarea { width: 100%; min-height: 4.5em; resize: vertical; overflow-wrap: anywhere; }

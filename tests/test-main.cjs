@@ -81,6 +81,8 @@ class FileSystemAdapter {
   getBasePath() {
     return "D:\\Vault";
   }
+
+  async exists() { return false; }
 }
 
 const legacyFile = new TFile("Target/速看-0810.md");
@@ -102,6 +104,7 @@ class Element {
     Object.assign(this, options.attr || {});
     this.children = [];
     this.disabled = false;
+    this.style = {};
     this.listeners = new Map();
     this.dataset = { navKey: options.attr?.["data-nav-key"] };
     if (options.attr) {
@@ -117,6 +120,7 @@ class Element {
   empty() { for (const child of this.children) child.parentElement = null; this.children = []; }
   appendChild(child) { if (child.parentElement) child.parentElement.children = child.parentElement.children.filter(c => c !== child); child.parentElement = this; this.children.push(child); return child; }
   focus() { this.focused = true; }
+  scrollIntoView(options) { this.scrollOptions = options; }
   querySelectorAll(selector) { return findElements(this, el => selector === "[data-nav-key]" ? !!el.dataset.navKey : selector === "[aria-label], [title]" ? !!(el["aria-label"] || el.title) : el.tag === selector); }
   querySelector(selector) { return this.querySelectorAll(selector)[0] || null; }
   setText(text) { this.text = text; }
@@ -319,6 +323,7 @@ class Setting {
   }
   addToggle(callback) { return this.addControl("toggle", callback); }
   addText(callback) { return this.addControl("text", callback); }
+  addTextArea(callback) { return this.addControl("textarea", callback); }
   addSlider(callback) { return this.addControl("slider", callback); }
   addButton(callback) { return this.addControl("button", callback); }
   addDropdown(callback) { return this.addControl("dropdown", callback); }
@@ -637,6 +642,9 @@ Module._load = function (request, parent, isMain) {
     [sourceManifest.name],
     "the rendered sidebar heading must use the new display name",
   );
+  const sidebarLogo = findElements(view.contentEl, (el) => el.cls === "ima-share-sync-brand-icon")[0];
+  assert.equal(sidebarLogo.icon, view.getIcon(), "sidebar home reuses the installed plugin logo");
+  assert.equal(sidebarLogo["aria-hidden"], "true", "the adjacent heading already names the plugin");
   assert.strictEqual(findElements(view.contentEl, (el) => el.cls === "ima-share-sync-version")[0].text, `v${sourceManifest.version}`, "sidebar should display the installed manifest version");
   plugin.manifest.version = "9.8.7";
   view.render();
@@ -818,10 +826,10 @@ Module._load = function (request, parent, isMain) {
     "角标提醒",
     "启动提示",
     "结果卡片",
-    "转为 MD",
-    "转换范围",
+    "PDF 文字转 Markdown",
+    "图片 OCR",
     "插入双链",
-    "手动补全",
+    "检查已有 PDF",
   ]);
   assert.ok(
     settingDescriptions.includes("每次检查最近 1–30 篇内容。"),
@@ -1186,6 +1194,86 @@ Module._load = function (request, parent, isMain) {
   assert.ok(tabButtons[2].cls.includes("is-active"), "markdown tab activated on click");
   assert.ok(!panelMarkdown.cls.includes("is-hidden"), "markdown panel visible after switch");
   assert.ok(panelStats.cls.includes("is-hidden"), "stats panel hidden after switch");
+  assert.equal(generalPlugin.settings.imageOcrEnabled, false);
+  assert.equal(settingControl(generalTab, "图片 OCR").value, false);
+  const engineFieldset = findElements(panelMarkdown, el => el.cls === "ima-ocr-choices")[0];
+  assert.equal(engineFieldset.hidden, true);
+  const checkLocalOcr = generalPlugin.isLocalOcrReady;
+  const localOcrChecks = [];
+  let lightweightReady = false;
+  generalPlugin.isLocalOcrReady = async mode => {
+    localOcrChecks.push(mode);
+    return mode === "local-mobile" && lightweightReady;
+  };
+  await settingControl(generalTab, "图片 OCR").change(true);
+  assert.equal(engineFieldset.hidden, false);
+  const engineOptions = findElements(engineFieldset, el => el.name === "ima-share-sync-ocr-engine");
+  const methodDetails = engineFieldset.children.slice(1).map(row => row.children[1]);
+  assert.deepEqual(engineOptions.map(el => el.value), ["api", "local", "local-mobile"]);
+  assert.equal(engineOptions[0].checked, true, "cloud is selected by default but no OCR starts");
+  assert.deepEqual(methodDetails.map(el => el.hidden), [false, true, true]);
+  const cloudGuide = findElements(methodDetails[0], el => el.cls.includes("ima-ocr-cloud-guide"))[0];
+  assert.ok(cloudGuide, "cloud setup is explained after image OCR is enabled");
+  assert.ok(findElements(cloudGuide, el => el.href === "https://aistudio.baidu.com/account/accessToken").length);
+  assert.ok(findElements(cloudGuide, el => el.href === "https://ai.baidu.com/ai-doc/AISTUDIO/Xmjclapam").length);
+  assert.ok(findElements(cloudGuide, el => el.text.includes("20,000 页")).length);
+  assert.ok(findElements(methodDetails[0], el => el.setting?.name === "百度 AI Studio API 令牌").length);
+  const dashboardNode = generalTab.mdDashboardEl;
+  generalTab.containerEl.scrollTop = 240;
+  for (const index of [1, 2, 0, 2]) {
+    const option = engineOptions[index];
+    option.focus();
+    option.checked = true;
+    await option.dispatchEvent({ type: "change" });
+    await generalPlugin.saveQueue;
+    assert.equal(generalPlugin.settings.ocrProvider, option.value);
+    assert.deepEqual(methodDetails.map(el => el.hidden), [0, 1, 2].map(i => i !== index));
+    const settingName = index === 0 ? "百度 AI Studio API 令牌" : "本地模型";
+    assert.ok(findElements(methodDetails[index], el => el.setting?.name === settingName).length);
+    assert.strictEqual(findElements(panelMarkdown, el => el.value === option.value)[0], option);
+    assert.strictEqual(generalTab.mdDashboardEl, dashboardNode, "switching OCR must not rebuild the dashboard");
+    assert.strictEqual(panelMarkdown.parentElement, generalTab.containerEl, "switching OCR must not replace the tab");
+    assert.equal(generalTab.containerEl.scrollTop, 240);
+    assert.equal(option.focused, true);
+    assert.equal(option.scrollOptions.block, "nearest");
+  }
+  assert.deepEqual(localOcrChecks, ["local", "local-mobile"], "checking cloud must not start a local check");
+  const lightweightSetup = findElements(methodDetails[2], el => el.setting?.name === "本地模型")[0].setting;
+  assert.match(lightweightSetup.description, /在 Obsidian 外安装/);
+  assert.deepEqual(lightweightSetup.controls.map(control => control.text), ["检查环境"]);
+  assert.ok(findElements(methodDetails[2], el => el.href?.endsWith("docs/OCR.md#local-ocr-setup")).length);
+  lightweightReady = true;
+  lightweightSetup.controls[0].click();
+  await waitForFixture(() => lightweightSetup.description.includes("已找到模型文件"));
+  assert.deepEqual(localOcrChecks, ["local", "local-mobile", "local-mobile"]);
+  generalPlugin.isLocalOcrReady = checkLocalOcr;
+  assert.ok(!renderedSettings(generalTab).some(row => row.name === "允许同步时使用云端 OCR"));
+  await settingControl(generalTab, "图片 OCR").change(false);
+  assert.equal(engineFieldset.hidden, true);
+  assert.strictEqual(generalTab.mdDashboardEl, dashboardNode);
+  const markdownDashboard = generalPlugin.markdownDashboardState;
+  generalTab.mdDashboardEl.isConnected = true;
+  generalPlugin.markdownDashboardState = { status: "converting", total: 29, current: 10, completed: 6, skipped: 3, failed: 1 };
+  generalTab.updateMarkdownDashboard();
+  assert.equal(generalTab.mdProgressSectionEl.style.display, "block");
+  assert.match(generalTab.mdProgressTextEl.textContent, /10\/29/);
+  assert.equal(generalTab.mdScanBtnEl.disabled, false);
+  assert.equal(generalTab.mdScanBtnEl.textContent, "停止转换");
+  generalPlugin.markdownDashboardState = { status: "completed", total: 29, current: 29, completed: 16, skipped: 11, failed: 2 };
+  generalTab.updateMarkdownDashboard();
+  assert.equal(generalTab.mdStatusTextEl.textContent, "已结束 · 2 项失败");
+  assert.equal(generalTab.mdProgressSectionEl.style.display, "none");
+  assert.equal(generalTab.mdProgressTextEl.textContent, "");
+  assert.equal(generalTab.mdScanBtnEl.disabled, true, "no pending run while image OCR is off");
+  generalPlugin.markdownDashboardState.failed = 0;
+  generalPlugin.markdownDashboardState.deferred = 2;
+  generalTab.updateMarkdownDashboard();
+  assert.equal(generalTab.mdStatusTextEl.textContent, "已结束 · 2 项待转换");
+  generalPlugin.markdownDashboardState.deferred = 0;
+  generalTab.updateMarkdownDashboard();
+  assert.equal(generalTab.mdStatusTextEl.textContent, "转换完成");
+  generalPlugin.markdownDashboardState = markdownDashboard;
+  generalTab.updateMarkdownDashboard();
   await tabButtons[1].click();
   const scopeGroupContent = (tab, kind) => tab.flowPanels[kind].basic;
   assert.strictEqual(settingRow(generalTab, "每次检查数量").containerEl, scopeGroupContent(generalTab, "sync"));
@@ -1218,6 +1306,10 @@ Module._load = function (request, parent, isMain) {
     assert.strictEqual(settingRow(generalTab, name).containerEl, name === "保存位置" ? scopeGroupContent(generalTab, "save") : generalTab.flowPanels.save.advanced, `${name} belongs in the shared save card`);
   }
   assert.strictEqual(settingControl(generalTab, "保留目录").value, true);
+  const destinationChooser = findElements(settingRow(generalTab, "保存位置").controlEl, el => el.cls === "ima-source-chooser")[0];
+  assert.ok(destinationChooser, "destination reuses the full-width source path chooser");
+  assert.equal(destinationChooser["aria-haspopup"], "dialog");
+  assert.equal(findElements(destinationChooser, el => el.cls === "ima-source-path-label")[0].text, draftOf(generalTab).destinationPath);
   const settingsExecCount = execCount;
   await settingControl(generalTab, "目录上限").change("2");
   await settingControl(generalTab, "扫描深度").change("2");
@@ -1947,6 +2039,13 @@ Module._load = function (request, parent, isMain) {
     interactive: index % 2 === 0, status: "failed", read: false,
     summary: `第 ${index} 次同步`, errors: [{ title: `文章 ${index}`, message: `错误原因 ${index}` }],
   }));
+  const conversionMetrics = {
+    durationMs: 1371046, uploadedFiles: 18, uploadedBytes: 128023856, unconfirmedFiles: 0, unconfirmedPdfBytes: 0,
+  };
+  historyFixtures[24].conversion = conversionMetrics;
+  const baiduFailure = { jobId: "119281400705576960", reason: "第 7 页无法解析 <details>" };
+  historyFixtures[24].errors.push({ title: "OCR 测试.pdf", message: "百度 OCR 任务失败", ocr: baiduFailure });
+  historyFixtures[25].conversion = { ...conversionMetrics, durationMs: -1 };
   historyPlugin.loadData = async () => ({ syncReports: historyFixtures, notificationsEnabled: false });
   await historyPlugin.onload();
   historyPlugin.identityProvider = undefined;
@@ -1961,7 +2060,7 @@ Module._load = function (request, parent, isMain) {
   assert.equal(openedModals.length, modalCountBeforeHistory, "viewing logs must never create a modal");
   assert.equal(revealedLeaf, existingHistoryLeaf, "error/history links reveal the existing plugin sidebar");
   assert.ok(findElements(inlineHistoryContainer, el => el.tag === "h4" && el.text === "同步日志").length, "history is mounted inside the plugin panel");
-  const recordsOnPage = () => findElements(historyModal.contentEl, el => el.tag === "details");
+  const recordsOnPage = () => findElements(historyModal.contentEl, el => el.tag === "details" && el.cls === "ima-share-sync-report");
   const historyButton = (text) => findElements(historyModal.contentEl, el => el.tag === "button" && (text === "‹ 返回" ? accessibleName(el) === "返回首页" : el.text === text))[0];
   assert.equal(recordsOnPage().length, 20);
   assert.ok(recordsOnPage().every(el => !el.open), "history details start collapsed");
@@ -1994,12 +2093,23 @@ Module._load = function (request, parent, isMain) {
   historyReload.identityProvider = undefined;
   mountPluginView(historyReload);
   assert.equal(historyReload.syncReports.length, 45, "all pages survive restart");
+  assert.deepEqual(historyReload.syncReports.find(report => report.id === "history-24").conversion, conversionMetrics);
+  assert.deepEqual(historyReload.syncReports.find(report => report.id === "history-24").errors[1].ocr, baiduFailure);
+  assert.equal(historyReload.syncReports.find(report => report.id === "history-25").conversion, undefined);
   await historyReload.recordSyncReport({ finishedAt: 2100000000000, interactive: false, status: "failed", summary: "新错误", errors: [{ title: "新文章", message: "新的原因" }] });
   historyReload.openSyncHistory([historyReload.syncReports.find(report => report.id === "history-24")]);
   historyModal = historyReload.historyPanel;
+  assert.ok(findElements(historyModal.contentEl,
+    el => el.tag === "p" && el.text === "转换耗时 22 分 51 秒 · 已上传 18 份（128.02 MB）").length);
   assert.equal(recordsOnPage().length, 20, "error link still opens the full paginated history");
   assert.equal(recordsOnPage().filter(el => el.open).length, 1, "only the linked error expands");
   assert.ok(findElements(recordsOnPage().find(el => el.open), el => el.text === "文章 24：错误原因 24").length);
+  const ocrFailure = findElements(recordsOnPage().find(el => el.open), el => el.cls === "ima-share-sync-ocr-failure")[0];
+  assert.ok(ocrFailure && !ocrFailure.open, "OCR details are collapsed until their row is opened");
+  await findElements(ocrFailure, el => el.tag === "summary" && el.text === "OCR 测试.pdf")[0].click();
+  assert.equal(ocrFailure.open, true);
+  assert.ok(findElements(ocrFailure, el => el.tag === "p" && el.text === "百度返回：第 7 页无法解析 <details>").length);
+  assert.ok(findElements(ocrFailure, el => el.tag === "p" && el.text === "百度任务 ID：119281400705576960").length);
   assert.ok(findElements(historyModal.contentEl, el => el.text === "第 2 / 3 页 · 共 46 次").length);
   assert.equal(historyReload.syncReports[0].read, false, "viewing an old error does not acknowledge newer errors");
   historyButton("‹ 返回").click();
@@ -2169,7 +2279,7 @@ Module._load = function (request, parent, isMain) {
   i18nTab.display();
   const zhNames = findElements(i18nTab.containerEl, (el) => !!el.setting).map(el => el.setting.name);
   assert.ok(zhNames.includes("启动同步"), "Chinese locale displays '启动同步'");
-  assert.ok(zhNames.includes("转为 MD"), "Chinese locale displays '转为 MD'");
+  assert.ok(zhNames.includes("PDF 文字转 Markdown"), "Chinese locale distinguishes PDF text extraction");
   assert.ok(zhNames.includes("开启通知"), "Chinese locale displays '开启通知'");
 
   // 2. 切换为英文语言 ("en")
@@ -2179,7 +2289,7 @@ Module._load = function (request, parent, isMain) {
   i18nTab.display();
   const enNames = findElements(i18nTab.containerEl, (el) => !!el.setting).map(el => el.setting.name);
   assert.ok(enNames.includes("Startup Sync"), "English locale displays 'Startup Sync'");
-  assert.ok(enNames.includes("Convert to MD"), "English locale displays 'Convert to MD'");
+  assert.ok(enNames.includes("PDF text to Markdown"), "English locale distinguishes PDF text extraction");
   assert.ok(enNames.includes("Enable Notice"), "English locale displays 'Enable Notice'");
   assert.ok(enNames.includes("Sync Mode"), "English locale displays 'Sync Mode'");
   assert.ok(enNames.includes("Foreground"), "English locale displays 'Foreground'");
@@ -2192,7 +2302,7 @@ Module._load = function (request, parent, isMain) {
   i18nTab.display();
   const nonZhNames = findElements(i18nTab.containerEl, (el) => !!el.setting).map(el => el.setting.name);
   assert.ok(nonZhNames.includes("Startup Sync"), "Non-Chinese locale falls back to English 'Startup Sync'");
-  assert.ok(nonZhNames.includes("Convert to MD"), "Non-Chinese locale falls back to English 'Convert to MD'");
+  assert.ok(nonZhNames.includes("PDF text to Markdown"), "Non-Chinese locale falls back to English");
 
   // 4. 切回繁体中文 ("zh-TW")：显示中文
   global.window.localStorage = {

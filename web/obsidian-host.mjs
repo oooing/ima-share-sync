@@ -118,6 +118,15 @@ export function installHost({ scenario, metadata, icons, storage }) {
         };
         callback(control); return this;
       }
+      addTextArea(callback) {
+        const input = this.bind(this.controlEl.createEl('textarea'));
+        const control = {
+          inputEl: input,
+          setValue(value) { input.value = value; return this; },
+          onChange(handler) { input.addEventListener('input', () => invoke(handler, input.value)); return this; },
+        };
+        callback(control); return this;
+      }
       addDropdown(callback) {
         const select = this.bind(this.controlEl.createEl('select'));
         const control = {
@@ -283,11 +292,11 @@ export function installHost({ scenario, metadata, icons, storage }) {
           typeof value === 'string' ? new TextEncoder().encode(value) : Uint8Array.from(value);
       } } };
       // PDF workers remain blocked; this settings-only host does not load WASM.
-      if (name === 'zlib') return { gunzipSync: () => new Uint8Array(0) };
+      if (name === 'zlib') return { gunzipSync: () => new Uint8Array(0), brotliDecompressSync: () => new Uint8Array(0) };
       if (name === 'fs' || name === 'electron') return new Proxy({}, { get: (_target, key) => blocked(`${name}.${String(key)}`) });
       if (name === 'fs/promises') return Object.fromEntries(['lstat', 'mkdir', 'mkdtemp', 'readFile', 'realpath', 'rm', 'writeFile', 'rename'].map((key) => [key, blocked(`fs.${key}`)]));
-      if (name === 'os') return { tmpdir: blocked('os.tmpdir') };
-      if (name === 'path') return { join: blocked('path.join'), resolve: blocked('path.resolve') };
+      if (name === 'os') return { tmpdir: blocked('os.tmpdir'), homedir: () => 'C:\\Fixture' };
+      if (name === 'path') return { join: (...parts) => parts.join('\\'), resolve: blocked('path.resolve') };
       throw new Error(`Unmocked fixture module: ${name}`);
     };
 

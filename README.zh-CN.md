@@ -10,11 +10,11 @@
 
 <p><a href="https://obsidian.md/plugins?id=ima-speed-sync"><strong>社区页面 →</strong></a></p>
 
-<p><a href="https://github.com/oooing/ima-share-sync/blob/main/docs/GUIDE.zh-CN.md">手动安装</a> · <a href="https://github.com/oooing/ima-share-sync/releases/tag/0.3.19">下载文件</a></p>
+<p><a href="https://github.com/oooing/ima-share-sync/blob/main/docs/GUIDE.zh-CN.md">手动安装</a> · <a href="https://github.com/oooing/ima-share-sync/releases/latest">下载文件</a></p>
 
 <p><sub>Windows 10+ · Obsidian 1.11.4+ · 已安装并登录 IMA 电脑版</sub></p>
 
-<p>0.3.19 已发布。可通过社区插件页面安装，也可按指南手动安装。</p>
+<p>可通过社区插件页面安装，也可按指南手动安装。</p>
 
 <p><a href="#适合谁用">适合谁用</a> · <a href="#能做什么">能做什么</a></p>
 
@@ -117,7 +117,7 @@
 <summary><strong>整理笔记</strong> · 5 项</summary>
 
 **转成笔记**  
-把 PDF 中已有的文字转成笔记，可附原件链接；扫描版只生成提示，不识别图片里的字。
+**PDF 文字转 Markdown** 默认开启，在本地提取。**图片 OCR 默认关闭**；扫描件可选两种本地模式，需在 Obsidian 外单独安装。推荐的云端模式只在配置自己的 [AI Studio 访问令牌](https://aistudio.baidu.com/account/accessToken) 并确认本轮后，才向百度发送整份 PDF；自动同步不上传。免费额度目前最高 20,000 页/用户/模型/天，以[官方配额](https://ai.baidu.com/ai-doc/AISTUDIO/Xmjclapam)为准。[设置与隐私](docs/OCR.md)
 
 **补齐笔记**  
 给已存好的 PDF 补上缺少的笔记，不用重新下载。
