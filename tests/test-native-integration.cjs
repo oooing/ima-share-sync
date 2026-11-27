@@ -323,3 +323,48 @@ test('native source preflight preserves fixed-root speed-reader imports without 
  assert.equal(plugin.lastReport.status,'success');assert.deepEqual(saved,[{id:'knowledge-speed-reader',destination:'研究/原月'}]);
  assert.equal(requests.length,1);assert.equal(plugin.settings.sourceIdentity.profiles['10000001'].folderDestinations,undefined);
 });
+test('native sync keeps mapped folders pinned when subfolder articles merge up and ignores stale attachment paths',async()=>{
+ const {plugin,saved}=prepareExtractedSync({
+  items:[
+   {sourceTitle:'1126新研报',sourceId:'knowledge-new-1126',body:'body',relativeFolder:['1126'],relativeFolderIds:['folder_1126']},
+   {sourceTitle:'1127新研报',sourceId:'knowledge-new-1127',body:'body',relativeFolder:['1127'],relativeFolderIds:['folder_1127']},
+  ],
+  errors:[],
+  skippedTitles:['原1126研报','合并上来的研报','移到1127的研报'],
+  sourceFolderObservations:[
+   {sourceId:'knowledge-orig-1126',relativeFolder:['1126'],relativeFolderIds:['folder_1126']},
+   {sourceId:'knowledge-from-sub',relativeFolder:['1126'],relativeFolderIds:['folder_1126']},
+   {sourceId:'knowledge-moved-1127',relativeFolder:['1127'],relativeFolderIds:['folder_1127']},
+  ],
+ });
+ const scope='a'.repeat(64);
+ plugin.settings.sourceIdentity.profiles['10000001'].folderDestinations={
+  '[]':[],
+  '["folder_1126"]':['1126'],
+  '["folder_1126","folder_1"]':['1126','1'],
+ };
+ const existingPaths=new Set([
+  '研究/原月/1126/原1126研报.pdf',
+  '研究/原月/1126/1/合并上来的研报.pdf',
+  '研究/原月/1126/移到1127的研报.pdf',
+ ]);
+ plugin.syncedAttachments=[
+  {sourceId:'knowledge-orig-1126',sourceScope:scope,path:'研究/原月/1126/原1126研报.pdf'},
+  {sourceId:'knowledge-from-sub',sourceScope:scope,path:'研究/原月/1126/1/合并上来的研报.pdf'},
+  {sourceId:'knowledge-moved-1127',sourceScope:scope,path:'研究/原月/1126/移到1127的研报.pdf'},
+  {sourceId:'knowledge-moved-1127',sourceScope:scope,path:'研究/原月/已删除旧目录/移到1127的研报.pdf'},
+ ];
+ plugin.app.vault.getAbstractFileByPath=p=>existingPaths.has(p)?new TFile():null;
+ await plugin.sync(true);
+ assert.equal(plugin.lastReport.status,'success');
+ assert.deepEqual(new Map(saved.map(item=>[item.id,item.destination])),new Map([
+  ['knowledge-new-1126','研究/原月/1126'],
+  ['knowledge-new-1127','研究/原月/1127'],
+ ]));
+ assert.deepEqual(plugin.settings.sourceIdentity.profiles['10000001'].folderDestinations,{
+  '[]':[],
+  '["folder_1126"]':['1126'],
+  '["folder_1126","folder_1"]':['1126','1'],
+  '["folder_1127"]':['1127'],
+ });
+});

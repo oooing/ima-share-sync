@@ -3685,7 +3685,11 @@ export default class ImaSpeedSyncPlugin extends Plugin {
           if (!normalized.startsWith(destinationPath + "/")) return;
           oldRecords.push({ id, path: normalized.slice(destinationPath.length + 1).split("/").slice(0, -1) });
         };
-        for (const record of this.syncedAttachments) if (record.sourceScope === nativeProfile.sourceScope) addOldPath(record.sourceId, record.path);
+        for (const record of this.syncedAttachments) {
+          if (record.sourceScope === nativeProfile.sourceScope && this.app.vault.getAbstractFileByPath(record.path) instanceof TFile) {
+            addOldPath(record.sourceId, record.path);
+          }
+        }
         for (const [filePath, metadata] of articleIndex.metadataByPath) if (metadata.sourceScope === nativeProfile.sourceScope && metadata.sourceId) addOldPath(metadata.sourceId, filePath);
         const mapping = buildFolderDestinations(nativeProfile.folderDestinations, observations.map(item => ({ ...item,
           relativeFolder: this.resolveItemDestination(destinationPath, item.relativeFolder).slice(destinationPath.length + 1).split("/").filter(Boolean),

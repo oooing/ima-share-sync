@@ -84,11 +84,67 @@ export function buildFolderDestinations(
     for (const [oldKey, oldPath] of records.get(id) ?? []) group.evidence.set(oldKey, oldPath);
     groups.set(key, group);
   }
-  // Apply every article-backed path before inventing paths for new folders.
-  for (const group of groups.values()) {
-    if (group.evidence.size > 1) throw new Error("同一目录 ID 的旧文章记录指向多个目录，无法自动确定保存位置。");
-    const proven = group.evidence.values().next().value;
-    if (proven) remember(group.chain, proven);
+  function canRepresent(chain: readonly string[], candidate: readonly string[]): boolean {
+    if (chain.length !== candidate.length) return false;
+    for (let depth = 0; depth <= chain.length; depth++) {
+      const key = JSON.stringify(chain.slice(0, depth)), normalized = pathKey(candidate.slice(0, depth));
+      const previous = result.get(key);
+      if (previous && pathKey(previous) !== normalized) return false;
+      const owner = owners.get(normalized);
+      if (owner !== undefined && owner !== key) return false;
+    }
+    return true;
+  }
+  function displayedPathKey(group: { chain: string[]; displayed: string[][] }): string | undefined {
+    const candidates = new Set<string>();
+    for (const displayed of group.displayed) {
+      let candidate = displayed;
+      for (let depth = group.chain.length - 1; depth >= 0; depth--) {
+        const parent = result.get(JSON.stringify(group.chain.slice(0, depth)));
+        if (parent) { candidate = [...parent, ...displayed.slice(depth)]; break; }
+      }
+      candidates.add(pathKey(candidate));
+    }
+    return candidates.size === 1 ? candidates.values().next().value : undefined;
+  }
+  // Apply article-backed paths only for unmapped folders; already-mapped folders stay pinned
+  // even if articles are moved or merged into them from other folders later.
+  const unresolved = [...groups.values()].filter(group => !result.has(JSON.stringify(group.chain)));
+  while (true) {
+    const singletons: { group: (typeof unresolved)[number]; path: string[] }[] = [];
+    for (const group of unresolved) {
+      if (result.has(JSON.stringify(group.chain))) continue;
+      const valid = [...group.evidence.values()].filter(candidate => canRepresent(group.chain, candidate));
+      if (valid.length === 1) singletons.push({ group, path: valid[0]! });
+    }
+    if (!singletons.length) break;
+    const claimants = new Map<string, Set<string>>();
+    for (const { group, path } of singletons) {
+      for (let depth = 1; depth <= group.chain.length; depth++) {
+        const prefixPath = pathKey(path.slice(0, depth)), prefixKey = JSON.stringify(group.chain.slice(0, depth));
+        const set = claimants.get(prefixPath) ?? new Set<string>();
+        set.add(prefixKey);
+        claimants.set(prefixPath, set);
+      }
+    }
+    const isUncontested = (chain: readonly string[], path: readonly string[]): boolean => {
+      for (let depth = 1; depth <= chain.length; depth++) {
+        if ((claimants.get(pathKey(path.slice(0, depth)))?.size ?? 0) > 1) return false;
+      }
+      return true;
+    };
+    let batch = singletons.filter(({ group, path }) => isUncontested(group.chain, path));
+    if (!batch.length) batch = singletons.filter(({ group, path }) => displayedPathKey(group) === pathKey(path));
+    if (!batch.length) {
+      for (const { group, path } of singletons) remember(group.chain, path);
+      break;
+    }
+    for (const { group, path } of batch) remember(group.chain, path);
+  }
+  for (const group of unresolved) {
+    if (result.has(JSON.stringify(group.chain))) continue;
+    const valid = [...group.evidence.values()].filter(candidate => canRepresent(group.chain, candidate));
+    if (valid.length > 1) throw new Error("同一目录 ID 的旧文章记录指向多个目录，无法自动确定保存位置。");
   }
   for (const group of [...groups.values()].sort((a, b) => a.chain.length - b.chain.length)) {
     if (result.has(JSON.stringify(group.chain))) continue;

@@ -43,11 +43,71 @@ test('same-named child directories under distinct verified parents stay separate
  assert.deepEqual(resolve(next,['folder_2','folder_4']),['乙','同名']);
 });
 
-test('conflicting old records for one directory or one article fail instead of choosing one',()=>{
+test('conflicting old records for one unmapped directory or one article fail instead of choosing one',()=>{
  const observations=[obs('a',['folder_1'],['新名']),obs('b',['folder_1'],['新名'])];
  assert.throws(()=>build({},observations,[old('a',['原甲']),old('b',['原乙'])]),/多个目录/);
  assert.throws(()=>build({},[observations[0]],[old('a',['原甲']),old('a',['原乙'])]),/多个目录/);
- assert.throws(()=>build({[key(['folder_1'])]:['已绑定']},[observations[0]],[old('a',['不一致'])]),/多个保存位置/);
+});
+
+test('already-mapped folders remain pinned when articles are moved or merged into them from other folders',()=>{
+ const existing={
+  [key(['folder_1126'])]:['1126'],
+  [key(['folder_1126','folder_1'])]:['1126','1'],
+ };
+ const next=build(existing,[
+  obs('in-1126',['folder_1126'],['1126']),
+  obs('moved-from-sub',['folder_1126'],['1126']),
+  obs('moved-from-other',['folder_1126'],['1126']),
+  obs('new-1127',['folder_1127'],['1127']),
+ ],[
+  old('in-1126',['1126']),
+  old('moved-from-sub',['1126','1']),
+  old('moved-from-other',['1125']),
+ ]);
+ assert.deepEqual(resolve(next,['folder_1126']),['1126']);
+ assert.deepEqual(resolve(next,['folder_1126','folder_1']),['1126','1']);
+ assert.deepEqual(resolve(next,['folder_1127']),['1127']);
+ const renamed=build({[key(['folder_1'])]:['已绑定']},[obs('a',['folder_1'],['改名'])],[old('a',['原别处'])]);
+ assert.deepEqual(resolve(renamed,['folder_1']),['已绑定']);
+});
+
+test('unmapped folders ignore moved-article evidence owned by another folder or at another depth',()=>{
+ const existing={[key(['folder_1126'])]:['1126'],[key(['folder_1126','folder_1'])]:['1126','1']};
+ const next=build(existing,[
+  obs('moved-same-depth',['folder_1127'],['1127']),
+  obs('moved-child-depth',['folder_1127'],['1127']),
+  obs('fresh',['folder_1127'],['1127']),
+ ],[
+  old('moved-same-depth',['1126']),
+  old('moved-child-depth',['1126','1']),
+ ]);
+ assert.deepEqual(resolve(next,['folder_1127']),['1127']);
+
+ const mergedUnmapped=build({},[
+  obs('orig',['folder_1126'],['1126']),
+  obs('merged-sub',['folder_1126'],['1126']),
+ ],[
+  old('orig',['1126']),
+  old('merged-sub',['1126','1']),
+ ]);
+ assert.deepEqual(resolve(mergedUnmapped,['folder_1126']),['1126']);
+});
+
+test('multi-folder unmapped scans resolve moved articles deterministically regardless of order',()=>{
+ const obsA=obs('a',['folder_1125'],['1125']);
+ const obsB1=obs('b',['folder_1126'],['1126']);
+ const obsB2=obs('c',['folder_1126'],['1126']);
+ const records=[old('a',['1125']),old('b',['1126']),old('c',['1125'])];
+ for(const list of [[obsA,obsB1,obsB2],[obsB2,obsB1,obsA]]){
+  const next=build({},list,records);
+  assert.deepEqual(resolve(next,['folder_1125']),['1125']);
+  assert.deepEqual(resolve(next,['folder_1126']),['1126']);
+ }
+ // When two unmapped folders both claim one unowned path, only an exact unrenamed folder wins; ambiguous renamed ties fail closed.
+ const split=build({},[obs('m',['folder_1126'],['1126']),obs('orig',['folder_1125'],['1125'])],[old('m',['1125']),old('orig',['1125'])]);
+ assert.deepEqual(resolve(split,['folder_1125']),['1125']);
+ assert.deepEqual(resolve(split,['folder_1126']),['1126']);
+ assert.throws(()=>build({},[obs('x',['folder_1'],['新甲']),obs('y',['folder_2'],['新乙'])],[old('x',['原同']),old('y',['原同'])]),/不同目录 ID/);
 });
 
 test('duplicate evidence for the same Windows directory preserves existing path spelling',()=>{
@@ -80,10 +140,11 @@ test('final local components reject traversal, Windows aliases, invalid characte
  assert.deepEqual(resolve(next,['folder_1']),['中文，空 格（2026）']);
 });
 
-test('old path and observed name depth must correspond to the full ID chain',()=>{
+test('persisted mappings and observed names must match the full ID chain depth',()=>{
  assert.throws(()=>build({},[obs('a',['folder_1'],['父','子'])],[]),/层级/);
- assert.throws(()=>build({},[obs('a',['folder_1'],['子'])],[old('a',['父','子'])]),/层级/);
  assert.throws(()=>build({[key(['folder_1','folder_2'])]:['子']},[],[]),/层级/);
+ const crossDepthMoved=build({},[obs('a',['folder_1'],['子'])],[old('a',['父','子'])]);
+ assert.deepEqual(resolve(crossDepthMoved,['folder_1']),['子']);
 });
 
 test('root articles are mapped to the source root and missing identity never falls back to labels',()=>{
